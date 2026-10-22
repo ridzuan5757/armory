@@ -155,9 +155,9 @@ const SHARED_A = `
   const nodes = new Map(), edges = new Map();
   let alpha = 1, gen = 0, firstLoad = true;
   // Focus: after an event, the camera goes to the colony where it happened.
-  let focus, note, fresh = [], lastFileAt = 0;
+  let focus, note, stay, fresh = [], lastFileAt = 0;
   const jobStates = new Map(), sessionStates = new Map();
-  const FOCUS_MS = 6000, HANDS_OFF_MS = 8000, MAP_HOLD_MS = 300000;
+  const FOCUS_MS = 6000, HANDS_OFF_MS = 8000, MAP_HOLD_MS = 30000;
   const cam = { x: 0, y: 0, z: 0, s: 1, r: 300 };
 
   function node(id, props, parent, delay) {
@@ -315,14 +315,22 @@ const SHARED_A = `
       const up = gone && [...edges.values()].find(e => e.b === gone.id && !e.link);
       if (up) { target = up.a; why = 'removed · ' + gone.label; }
     }
-    // On a map the camera stays where the person put it for MAP_HOLD_MS, as
-    // in a strategy game; the label still names the event.
+    // After the person moves a map, events wait MAP_HOLD_MS before they move
+    // the camera; the label still names them. A focus on one colony lasts
+    // FOCUS_MS before an event in another colony takes the camera, so the
+    // view does not jump between colonies.
     if (!target) return;
-    if (performance.now() - view.idle < (MAP ? MAP_HOLD_MS : HANDS_OFF_MS)) {
-      if (MAP) note = { why, until: performance.now() + FOCUS_MS };
+    const t = performance.now();
+    const colonyOf = id => { const n = nodes.get(id); return n && (n.kind === 'hub' ? n.id : n.colony); };
+    const held = t - view.idle < (MAP ? MAP_HOLD_MS : HANDS_OFF_MS);
+    const busy = MAP && focus && t < focus.since + FOCUS_MS && colonyOf(focus.id) !== colonyOf(target);
+    if (held || busy) {
+      if (MAP) note = { why, until: t + FOCUS_MS };
       return;
     }
-    focus = { id: target, why, until: performance.now() + FOCUS_MS };
+    focus = { id: target, why, since: t, until: t + FOCUS_MS };
+    // On a map the camera stays on this area after the focus ends.
+    if (MAP) stay = focus;
   }
 
   // How much a node glows: full when a tool used it, gone after GLOW_MS.
@@ -500,7 +508,9 @@ const SHARED_B = `
     const label = document.getElementById('focus');
     const text = focus ? '◎ ' + focus.why : note && now < note.until ? '\u2022 ' + note.why : '';
     if (label.textContent !== text) label.textContent = text;
-    const target = focus && nodes.get(focus.id);
+    // A map keeps the area of its last focus (stay) until Home.
+    if (stay && !nodes.has(stay.id)) stay = undefined;
+    const target = (focus || stay) && nodes.get((focus || stay).id);
     const colony = target && (target.kind === 'hub' ? target.id : target.colony);
     // A theme can give the bounds of its whole world, for the view at rest.
     const whole = !colony && typeof fitBounds === 'function' ? fitBounds() : undefined;
@@ -686,7 +696,7 @@ const SHARED_B = `
       const z = { '+': 1.25, '=': 1.25, '-': 0.8 }[ev.key];
       if (z) { ev.preventDefault(); touch(); zoomAt(z, W / 2, (H + TOP - BOTTOM) / 2); return; }
       // Home or 0: back to the whole map at once.
-      if (ev.key === 'Home' || ev.key === '0') { ev.preventDefault(); view.zoom = 1; view.px = view.py = view.vpx = view.vpy = 0; return; }
+      if (ev.key === 'Home' || ev.key === '0') { ev.preventDefault(); view.zoom = 1; view.px = view.py = view.vpx = view.vpy = 0; focus = stay = undefined; return; }
       const k = KEYS[ev.key];
       if (!k) return;
       ev.preventDefault();
@@ -726,15 +736,15 @@ const SHARED_B = `
   function frame(now) {
     requestAnimationFrame(frame);
     const spin = Math.abs(view.vyaw) + Math.abs(view.vpitch) > 0.0005;
-    // After 4 s with no input (5 minutes on a map), the network turns slowly; the
+    // After 4 s with no input, the network turns slowly (a map stays); the
     // speed eases in.
     // It stops while the pointer is on a node, so the tooltip stays put.
-    const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > (MAP ? MAP_HOLD_MS : 4000);
+    const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > 4000;
     view.auto = idle ? Math.min(1, view.auto + 0.02) : 0;
     const busy = alpha > 0.004 || drag || turn || spin || Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || focus || view.auto > 0 || now - lastData < 1500;
     if (now - last < (busy ? 33 : calm ? 1000 : 66)) return;
     last = now;
-    if (view.auto > 0) {
+    if (view.auto > 0 && !MAP) {
       if (AUTO_TURN) view.yaw += 0.0035 * view.auto;
       // The zoom goes slowly back to the size that fits the pane.
       view.zoom += (1 - view.zoom) * 0.012 * view.auto;
@@ -746,8 +756,11 @@ const SHARED_B = `
       if (!turn) {
         movePan(view.vpx, view.vpy);
         view.vpx *= 0.8; view.vpy *= 0.8;
-        const back = view.auto > 0 ? 0.012 * view.auto : focus ? 0.05 : 0;
+        // A focus brings the camera to its area: the person's pan and zoom
+        // ease out. A map never goes back to the whole view by itself.
+        const back = focus ? 0.05 : 0;
         view.px -= view.px * back; view.py -= view.py * back;
+        view.zoom += (1 - view.zoom) * back;
       }
     }
     if (!turn && spin) {

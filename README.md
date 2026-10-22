@@ -84,8 +84,10 @@ game, and it wraps around at 180° like the Earth (routes take the short way
 across the Pacific); up and down, it moves until a pole edge is at the middle
 of the pane: drag with the mouse or with two fingers, or use the arrow keys (or
 WASD), to move the map. Pinch to zoom to the point under the pointer, or
-use + and - to zoom. The camera stays where you put it for 5 minutes (an
-event only names itself at the top); Home or 0 shows the whole map again.
+use + and - to zoom. When work happens, the camera goes to that colony
+and stays there; it never goes back to the whole map by itself. For 30 s
+after you move the map, events only name themselves at the top. Home or 0
+shows the whole map again.
 
 ## Links beside the chat (optional, macOS)
 
