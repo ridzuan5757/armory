@@ -6,7 +6,7 @@ that Ghostty tab, beside the chat, not in your browser.
 | Link | Opens in |
 | --- | --- |
 | Clicked in Ghostty, in a tab with an Armory split | a new tab in that split |
-| Host on the rules list (GitHub, GitLab, sign-in pages, ...) | your usual browser |
+| Host on your rules list (empty by default) | your usual browser |
 | Clicked in any other app, or no split in that Ghostty tab | your usual browser |
 | Not a web link (`mailto:`, ...) | your usual browser |
 
@@ -18,8 +18,8 @@ It does not change Ghostty or Claude Code.
 The split runs terminal-browser's own Chromium, with its own cookies. On a
 site you open there, you log in again one time. Your browser's extensions,
 such as a password manager, are not there, and passkeys or security keys
-may not work. So the rules list sends sites with important logins to your
-usual browser. Add your own hosts to it, such as a company GitLab.
+may not work. To keep such a site in your usual browser, add its host to
+the rules list.
 
 ## Install
 

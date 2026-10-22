@@ -1,19 +1,15 @@
-# Hosts that always open in your usual browser: sites that need your logins,
-# passkeys or password manager. One pattern per line; '*.host' matches its
-# subdomains. Copied to ~/.config/armory/link-rules on install; edit that copy.
+# Hosts that always open in your usual browser, not in the Armory split.
+# Empty by default: every link you click in Ghostty opens in the split.
+# Uncomment or add hosts for sites whose logins, passkeys or password
+# manager you want to keep in your usual browser. One pattern per line;
+# '*.host' matches its subdomains. Copied to ~/.config/armory/link-rules on
+# install; edit that copy.
 
-github.com
-*.github.com
-gitlab.com
-*.gitlab.com
-
-# Single sign-on and account pages.
-login.microsoftonline.com
-login.live.com
-accounts.google.com
-appleid.apple.com
-*.okta.com
-
-# Atlassian (Jira, Confluence).
-*.atlassian.net
-id.atlassian.com
+# github.com
+# *.github.com
+# gitlab.com
+# *.gitlab.com
+# login.microsoftonline.com
+# accounts.google.com
+# appleid.apple.com
+# *.atlassian.net

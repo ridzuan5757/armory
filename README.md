@@ -62,8 +62,8 @@ item to see its details.
 ## Links beside the chat (optional, macOS)
 
 The [link router](link-router/README.md) opens the links you click in
-Ghostty as tabs in the Armory split. Sites with important logins, such as
-GitHub and GitLab, still open in your usual browser.
+Ghostty as tabs in the Armory split. A rules list can keep chosen sites in
+your usual browser.
 
 ## Data
 
