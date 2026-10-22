@@ -88,11 +88,16 @@ async function loadJobs($: EngineInterface, home: string, errors: string[]): Pro
     if (text === undefined) continue
     try {
       const state = JSON.parse(text)
+      // Only these fields leave the file: it also holds the job's output and
+      // provider settings.
+      const cwd = typeof state.cwd === 'string' ? state.cwd : ''
       rows.push({
         id: entry.name,
         name: state.intent ?? state.name ?? entry.name,
         state: state.state ?? '?',
         detail: state.detail ?? '',
+        session: typeof state.sessionId === 'string' ? state.sessionId : '',
+        cwd: home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd,
       })
     } catch (err) {
       errors.push(`job ${entry.name}: ${String(err)}`)

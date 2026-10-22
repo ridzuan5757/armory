@@ -1,6 +1,7 @@
 export type Tab = 'skills' | 'jobs' | 'memory'
 export type SkillRow = { name: string; source: string; model: string; uses: number }
-export type JobRow = { id: string; name: string; state: string; detail: string }
+// session is the job's own session id; cwd its folder, ~ for home.
+export type JobRow = { id: string; name: string; state: string; detail: string; session: string; cwd: string }
 export type MemoryRow = { group: string; title: string; slug: string; out: number; in: number; links: string[]; size: number }
 // A file or folder on the FILES hub. path is relative to the session folder,
 // or starts with ~/ (home) or / for a file outside it. at is the last time a

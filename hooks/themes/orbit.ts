@@ -355,14 +355,15 @@ export const ORBIT: Theme = {
       ctx.stroke();
     }
 
-    // Links between memories: faint dashed lines.
-    ctx.setLineDash([2, 5]);
+    // Links: memory [[links]] and job-session links are faint dashed lines;
+    // a job and its own session have a solid one.
     for (const e of edges.values()) {
       if (!e.link || e.dying) continue;
       const a = nodes.get(e.a), b = nodes.get(e.b);
       if (!a || !b) continue;
       const lit = !hover || (near.has(e.a) && near.has(e.b));
-      ctx.strokeStyle = rgba('#cfe0ff', 0.22 * (lit ? 1 : 0.3) * (inFocus(a) ? 1 : 0.3) * (a.fog + b.fog) / 2);
+      ctx.setLineDash(e.solid ? [] : [2, 5]);
+      ctx.strokeStyle = rgba(e.color || '#cfe0ff', (e.solid ? 0.45 : 0.22) * (lit ? 1 : 0.3) * (inFocus(a) ? 1 : 0.3) * (a.fog + b.fog) / 2);
       ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
     }
     ctx.setLineDash([]);

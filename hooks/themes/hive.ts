@@ -375,18 +375,21 @@ export const HIVE: Theme = {
       }
     }
 
-    // Memory links: faint dance lines between cells.
-    ctx.setLineDash([2, 4]);
+    // Links: faint dance lines between cells (memory [[links]], a job and the
+    // sessions in its folder); a job and its own session have a solid one.
     ctx.lineWidth = 1;
     for (const e of edges.values()) {
       if (!e.link || e.dying) continue;
       const a = nodes.get(e.a), b = nodes.get(e.b);
       if (!a || !b) continue;
       const lit = !hover || (near.has(e.a) && near.has(e.b));
-      ctx.strokeStyle = rgba('#f3e2b0', 0.25 * (lit ? 1 : 0.3) * (inFocus(a) ? 1 : 0.3) * (a.fog + b.fog) / 2);
+      ctx.setLineDash(e.solid ? [] : [2, 4]);
+      ctx.lineWidth = e.solid ? 1.6 : 1;
+      ctx.strokeStyle = rgba(e.color || '#f3e2b0', (e.solid ? 0.6 : 0.3) * (lit ? 1 : 0.3) * (inFocus(a) ? 1 : 0.3) * (a.fog + b.fog) / 2);
       ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
     }
     ctx.setLineDash([]);
+    ctx.lineWidth = 1;
 
     // Bees on trips, with a short trail.
     for (const b of bees) {
