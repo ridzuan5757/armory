@@ -87,7 +87,8 @@ WASD), to move the map. Pinch to zoom to the point under the pointer, or
 use + and - to zoom. When work happens, the camera goes to that colony
 and stays there; it never goes back to the whole map by itself. For 30 s
 after you move the map, events only name themselves at the top. Home or 0
-shows the whole map again.
+shows the whole map again. Put the pointer on a volcano, a disaster or an
+earthquake to see its name, cost and time left.
 
 ## Links beside the chat (optional, macOS)
 

@@ -14,7 +14,7 @@ import { HORSE_KIT } from './horse'
 
 export const CARAVAN: Theme = {
   name: 'caravan',
-  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · famous volcanoes grow, erupt and cool; the nearest one erupts at each write · earthquakes on the plate faults leave rifts, rivers and new hills · 1 hour = 1 year: each season brings floods, tornadoes, wildfires, droughts, storms or blizzards that slow the horses · clouds follow the wind belts · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
+  legend: '',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
   const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:memory', 'hub:sessions'];
@@ -1045,6 +1045,18 @@ export const CARAVAN: Theme = {
 
   let pen = ctx;
 
+  // Landmark and disaster labels show only under the pointer.
+  const mouse = { x: -1e4, y: -1e4 };
+  canvas.addEventListener('pointermove', ev => { mouse.x = ev.clientX; mouse.y = ev.clientY; });
+  canvas.addEventListener('pointerleave', () => { mouse.x = mouse.y = -1e4; });
+  const under = (x, y, r) => Math.hypot(mouse.x - x, mouse.y - y) < Math.max(14, r);
+  function tag(text, x, y, color, fade) {
+    pen.lineWidth = 3; pen.strokeStyle = rgba('#14161b', 0.85 * fade);
+    pen.strokeText(text, x, y);
+    pen.fillStyle = rgba(color, fade);
+    pen.fillText(text, x, y);
+  }
+
   // A small mark for the terrain of a tile. Waves move with time.
   function terrainMark(kind, x, y, f, fade, seed, t) {
     const u = TILE * f;
@@ -1094,7 +1106,7 @@ export const CARAVAN: Theme = {
   }
 
   // The volcanoes: dark cones sized by their cycle, a glowing crater and a
-  // column of smoke, with the name below. A growing or erupting one has a
+  // column of smoke; its name and stage under the pointer. A growing or erupting one has a
   // thicker column and trembling rings; an erupting one throws lava. At each
   // file write the volcano nearest the FILES city erupts for 4 s.
   function drawVolcano(t) {
@@ -1141,13 +1153,10 @@ export const CARAVAN: Theme = {
           }
         }
       }
-      if (base.f > 0.45) {
-        pen.font = '10px ui-sans-serif, system-ui, sans-serif';
-        const text = v.name + (st.stage === 'dormant' ? '' : ' \u00b7 ' + st.stage + (st.woken ? ' (woken by M' + st.woken.M + ')' : ''));
-        pen.lineWidth = 3; pen.strokeStyle = 'rgba(20,22,27,0.75)';
-        pen.strokeText(text, base.x, base.y + 0.4 * u + 11);
-        pen.fillStyle = st.stage === 'dormant' ? 'rgba(220,210,200,0.75)' : 'rgba(255,170,110,0.95)';
-        pen.fillText(text, base.x, base.y + 0.4 * u + 11);
+      if (under(base.x, base.y - 0.2 * u, u * 1.2)) {
+        pen.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+        const text = v.name + ' \u00b7 ' + st.stage + (st.woken ? ' (woken by M' + st.woken.M + ')' : '');
+        tag(text, base.x, base.y + 0.4 * u + 12, st.stage === 'dormant' ? '#dcd2c8' : '#ffaa6e', 1);
       }
     }
   }
@@ -1172,13 +1181,10 @@ export const CARAVAN: Theme = {
         pen.lineWidth = Math.max(1, w * 0.1);
         pen.beginPath(); pen.moveTo(p.x - w * 0.45 + jx, p.y - w * 0.1); pen.lineTo(p.x - w * 0.15 + jx, p.y + w * 0.1); pen.lineTo(p.x + w * 0.1 + jx, p.y - w * 0.12); pen.lineTo(p.x + w * 0.45 + jx, p.y + w * 0.08); pen.stroke();
       }
-      pen.font = '700 11px ui-sans-serif, system-ui, sans-serif';
-      const text = 'M' + q.M.toFixed(1) + ' earthquake \u00b7 ' + q.fault;
-      const y = s.y - u * 1.6;
-      pen.lineWidth = 3; pen.strokeStyle = 'rgba(20,22,27,' + (0.85 * fade) + ')';
-      pen.strokeText(text, s.x, y);
-      pen.fillStyle = 'rgba(232,196,140,' + fade + ')';
-      pen.fillText(text, s.x, y);
+      if (under(s.x, s.y, u * size)) {
+        pen.font = '700 11px ui-sans-serif, system-ui, sans-serif';
+        tag('M' + q.M.toFixed(1) + ' earthquake \u00b7 ' + q.fault + ' \u00b7 cost \u00d72', s.x, s.y - u * 1.6, '#e8c48c', fade);
+      }
     }
   }
 
@@ -1312,7 +1318,7 @@ export const CARAVAN: Theme = {
   // Disasters on the map. Each fades in and out over 4 s. A flood is blue
   // water with rings, a wildfire flickering flames and smoke, a storm a
   // turning spiral, a blizzard drifting snow, an earthquake cracks that
-  // shake. Over the middle, its name and the time left.
+  // shake. Under the pointer: its name, cost and the time left.
   function drawDisasters(t) {
     const now = worldNow();
     pen.textAlign = 'center';
@@ -1377,19 +1383,16 @@ export const CARAVAN: Theme = {
           pen.stroke();
         }
       }
-      const left = Math.max(0, Math.round((d.end - now) / 1000));
-      pen.font = '600 11px ui-sans-serif, system-ui, sans-serif';
-      const text = hz.name + ' \u00b7 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
-      const y = s.y - u * (d.radius + 1.2);
-      pen.lineWidth = 3; pen.strokeStyle = rgba('#14161b', 0.85 * fade);
-      pen.strokeText(text, s.x, y);
-      pen.fillStyle = rgba(hz.color, fade);
-      pen.fillText(text, s.x, y);
+      if (under(s.x, s.y, u * (d.radius + 1))) {
+        const left = Math.max(0, Math.round((d.end - now) / 1000));
+        pen.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+        tag(hz.name + ' \u00b7 cost \u00d7' + hz.mult + ' \u00b7 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'), s.x, s.y - u * (d.radius + 1.2), hz.color, fade);
+      }
     }
   }
 
   // The calendar, at the top right: a year wheel with its four seasons and a
-  // hand, the year, the season and day in the north, and the disasters now.
+  // hand, the year, and the season and day in the north and the south.
   function drawCalendar() {
     const cal = calendar(), x = W - 30, y = TOP + 26, R = 14;
     for (let i = 0; i < 4; i++) {
@@ -1407,30 +1410,6 @@ export const CARAVAN: Theme = {
     pen.font = '11px ui-sans-serif, system-ui, sans-serif';
     pen.fillStyle = 'rgba(210,214,222,0.75)';
     pen.fillText('south: ' + SEASONS[(cal.season + 2) % 4] + ' \u00b7 1 hour = 1 year', x - R - 8, y + 9);
-    const now = worldNow();
-    if (!active.length) {
-      // None now: the next one and the time until it starts.
-      const next = [...disastersOf(cal.n), ...disastersOf(cal.n + 1)].filter(d => d.start > now).sort((p, q) => p.start - q.start)[0];
-      if (next) {
-        const wait = Math.round((next.start - now) / 1000);
-        pen.fillStyle = 'rgba(210,214,222,0.75)';
-        pen.fillText('No disaster now \u00b7 next: ' + HAZARD[next.kind].name + ' in ' + Math.floor(wait / 60) + ':' + String(wait % 60).padStart(2, '0'), x - R - 8, y + 30);
-      }
-    }
-    const lines = [
-      ...active.map(d => { const hz = HAZARD[d.kind]; return [hz.color, hz.name + ' \u00d7' + hz.mult + ' cost', d.end]; }),
-      ...liveQuakes.map(q => ['#c9a06a', 'M' + q.M.toFixed(1) + ' earthquake \u00b7 ' + q.fault, q.at + QUAKE_LIVE]),
-      ...volcanoes.filter(v => v.state && v.state.stage !== 'dormant' && v.state.stage !== 'cooling')
-        .map(v => ['#ff7a3a', v.name + ' ' + v.state.stage, 0]),
-    ];
-    lines.forEach(([color, label, end], i) => {
-      const left = Math.max(0, Math.round((end - now) / 1000));
-      const yy = y + 30 + (active.length ? 0 : 15) + i * 15;
-      pen.fillStyle = color;
-      pen.beginPath(); pen.arc(x - R - 12 - 4, yy, 3.5, 0, 6.2832); pen.fill();
-      pen.fillStyle = 'rgba(225,228,234,0.9)';
-      pen.fillText(label + (end ? ' \u00b7 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') : ''), x - R - 26, yy);
-    });
     pen.textBaseline = 'alphabetic';
   }
 
