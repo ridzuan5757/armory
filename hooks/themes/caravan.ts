@@ -78,7 +78,7 @@ export const CARAVAN: Theme = {
   // The view from the data, set by /armory view; G changes it here until
   // the next change of the setting.
   // A simple world (/armory world simple) has no time, seasons, disasters,
-  // tectonics, volcano cycles or clouds: only the map, colonies and horses.
+  // tectonics, volcanoes or clouds: only the map, colonies and horses.
   let SIMPLE = false;
   function onData(d) {
     SIMPLE = d.world === 'simple';
@@ -949,11 +949,13 @@ export const CARAVAN: Theme = {
   let terraKey = '', terraGen = 0, changed = new Set(), liveQuakes = [], lastTerra = -Infinity;
   function updateTectonics() {
     if (!tiles.size) return;
-    // A simple world: the land as built, dormant volcanoes, no quakes.
+    // A simple world: the land as built, with no volcanoes (their tiles are
+    // mountains) and no quakes.
     if (SIMPLE) {
       if (terraKey === 'simple') return;
       for (const k of changed) { const tl = tiles.get(k); tl.terrain = tl.base; tl.land = tl.baseLand; }
       changed = new Set();
+      for (const v of volcanoes) { tiles.get(v.k).terrain = 'mountain'; changed.add(v.k); }
       liveQuakes = [];
       volcanoes.forEach(v => { v.state = { stage: 'dormant', r: 0, size: 0.7 }; });
       rivers = baseRivers.slice();
@@ -1184,6 +1186,7 @@ export const CARAVAN: Theme = {
   // thicker column and trembling rings; an erupting one throws lava. At each
   // file write the volcano nearest the FILES city erupts for 4 s.
   function drawVolcano(t) {
+    if (SIMPLE) return;
     const files = owner.get('hub:files');
     let nearest, nd = Infinity;
     if (files) for (const v of volcanoes) { const d = tdist([v.q, v.r], [files.q, files.r]); if (d < nd) { nd = d; nearest = v; } }
