@@ -662,12 +662,16 @@ export const CARAVAN: Theme = {
   // Natural disasters. Each season starts five to eight, at any time in the
   // season, from a seed of the season's number; six in ten come within four
   // tiles of a road. About two are active at a time. A kind needs its
-  // local season and its land: floods on rivers and tornadoes on the
-  // mid-latitude plains in spring, wildfires in forest, jungle and grassland
-  // and droughts on dry land in summer, tropical storms at sea near the coast
-  // in autumn, blizzards at high latitudes in winter. (Earthquakes come from
-  // the faults, not the seasons: see Tectonics.) Each lasts three to six real
-  // minutes. Inside one, a tile costs mult times more to cross.
+  // local season and its land: floods on rivers in spring, wildfires in
+  // forest, jungle and grassland and droughts on dry land in summer, tropical
+  // storms at sea near the coast in autumn, blizzards at high latitudes in
+  // winter. Tornadoes follow the wind model (when): they form on plains and
+  // grassland where the westerlies meet the warm tropical air (30 to 40
+  // degrees from the belt line, which moves with the seasons), in the warm
+  // half of that hemisphere's year, and they move east with the westerlies,
+  // one tile every TORNADO_STEP, until they reach the sea. (Earthquakes come
+  // from the faults: see Tectonics.) Each lasts three to six real minutes. Inside one, a tile
+  // costs mult times more to cross.
   const HAZARD = {
     flood: { name: 'Flood', season: 0, mult: 3, color: '#4f9fd0', r: [1, 2], land: true,
       place: tl => tl.land && (riverSet.has(tkey(tl.q, tl.r)) || DIRS.some(([dq, dr]) => riverSet.has(tkey(tl.q + dq, tl.r + dr)))) },
@@ -677,11 +681,16 @@ export const CARAVAN: Theme = {
       place: tl => WET[tl.terrain] && tl.coast <= 3 && Math.abs(tl.lat) > 8 && Math.abs(tl.lat) < 35 },
     blizzard: { name: 'Blizzard', season: 3, mult: 4, color: '#eef4f8', r: [1, 2], land: true,
       place: tl => tl.land && Math.abs(tl.lat) > 38 && tl.terrain !== 'ice' },
-    tornado: { name: 'Tornado', season: 0, mult: 3, color: '#9aa3ad', r: [1, 1], land: true,
-      place: tl => (tl.terrain === 'plains' || tl.terrain === 'grass') && Math.abs(tl.lat) > 25 && Math.abs(tl.lat) < 50 },
+    tornado: { name: 'Tornado', season: -1, mult: 3, color: '#9aa3ad', r: [1, 1], land: true, moves: true,
+      place: tl => tl.terrain === 'plains' || tl.terrain === 'grass',
+      when: (tl, n) => {
+        const local = seasonAt(tl.lat, ((n % 4) + 4) % 4), a = Math.abs(tl.lat - shiftOf((((n % 4) + 4) % 4 + 0.5) / 4));
+        return local <= 1 && a >= 30 && a <= 40;
+      } },
     drought: { name: 'Drought', season: 1, mult: 2, color: '#d9a441', r: [2, 3], land: true,
       place: tl => (tl.terrain === 'desert' || tl.terrain === 'plains' || tl.terrain === 'grass' || tl.terrain === 'sand') && Math.abs(tl.lat) < 40 },
   };
+  const TORNADO_STEP = 40000;
   const seasonDisasters = new Map();
   function disastersOf(n) {
     if (seasonDisasters.has(n)) return seasonDisasters.get(n);
@@ -689,7 +698,7 @@ export const CARAVAN: Theme = {
     const count = 5 + Math.floor(rnd() * 4);
     for (let tries = 0; out.length < count && tries < 60; tries++) {
       const kind = kinds[Math.floor(rnd() * kinds.length)], hz = HAZARD[kind];
-      const spots = [...tiles.values()].filter(tl => hz.place(tl) && (hz.season < 0 || seasonAt(tl.lat, north) === hz.season)
+      const spots = [...tiles.values()].filter(tl => hz.place(tl) && (hz.when ? hz.when(tl, n) : hz.season < 0 || seasonAt(tl.lat, north) === hz.season)
         && out.every(d => tdist([d.q, d.r], [tl.q, tl.r]) > 5));
       if (!spots.length) continue;
       // Most disasters come near a road, where the caravans travel.
@@ -697,7 +706,7 @@ export const CARAVAN: Theme = {
       const pool = near.length && rnd() < 0.6 ? near : spots;
       const at = pool[Math.floor(rnd() * pool.length)];
       const start = EPOCH + n * SEASON_MS + rnd() * SEASON_MS;
-      out.push({ id: n + ':' + out.length, kind, q: at.q, r: at.r, radius: hz.r[0] + Math.floor(rnd() * (hz.r[1] - hz.r[0] + 1)),
+      out.push({ id: n + ':' + out.length, kind, q: at.q, r: at.r, q0: at.q, r0: at.r, radius: hz.r[0] + Math.floor(rnd() * (hz.r[1] - hz.r[0] + 1)),
         start, end: start + 180000 + rnd() * 180000 });
     }
     seasonDisasters.set(n, out);
@@ -711,7 +720,21 @@ export const CARAVAN: Theme = {
     if (!tiles.size) return;
     const now = worldNow(), { n } = calendar();
     active = [...disastersOf(n - 1), ...disastersOf(n)].filter(d => now >= d.start && now < d.end);
-    const key = active.map(d => d.id).join(',') + '|' + liveQuakes.map(q => q.id).join(',');
+    // A tornado moves east with the westerlies, one tile a step, and ends
+    // when it reaches the sea.
+    for (const d of active) {
+      if (!HAZARD[d.kind].moves) continue;
+      let q = d.q0, r = d.r0;
+      d.gone = false;
+      for (let i = Math.floor((now - d.start) / TORNADO_STEP); i > 0; i--) {
+        const [nq, nr] = unkey(tkey(q + 1, r));
+        if (WET[tiles.get(tkey(nq, nr)).terrain]) { d.gone = true; break; }
+        q = nq; r = nr;
+      }
+      d.q = q; d.r = r;
+    }
+    active = active.filter(d => !d.gone);
+    const key = active.map(d => d.id + '@' + d.q + ',' + d.r).join(',') + '|' + liveQuakes.map(q => q.id).join(',');
     if (key === hazardKey) return;
     hazardKey = key; hazardGen++;
     hazard = new Map();
@@ -1145,7 +1168,8 @@ export const CARAVAN: Theme = {
   // equator and 30 degrees, the westerlies blow east from 30 to 60 degrees,
   // and the polar easterlies blow west above 60. The belts move up to 8
   // degrees north in the northern summer and south in its winter.
-  const beltShift = () => 8 * Math.sin(2 * Math.PI * (calendar().frac - 0.125));
+  const shiftOf = frac => 8 * Math.sin(2 * Math.PI * (frac - 0.125));
+  const beltShift = () => shiftOf(calendar().frac);
   function windAt(lat) {
     const a = Math.abs(lat - beltShift());
     return a < 30 ? -1 : a < 60 ? 1.3 : -0.7;
