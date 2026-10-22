@@ -207,19 +207,25 @@ async function loadFiles($: EngineInterface, home: string, cwd: string): Promise
   return [...rows.values()]
 }
 
-// The GIT colony: the repos that hold the files this session used, and the
-// session folder when it is one; the newest used first, six at most. One
-// shell run per repo gives the branch line, the changes, their line counts
-// and the commits not pushed.
+// The GIT colony: the repo that holds the session folder, the repos in the
+// folders one level below it, and the repos that hold the files this
+// session used; forty at most. One shell run per repo gives the branch line,
+// the changes, their line counts and the commits not pushed. A repo that
+// holds a used file is read at each load; the others when their last read is
+// older than STALE_MS, a few per load, so a large folder costs little.
 const GIT = `cd "$1" || exit 1
 git status --porcelain=v1 -b -uall 2>/dev/null | head -121
 echo @@
 git diff --numstat HEAD 2>/dev/null | head -300
 echo @@
 git log --format='%h %s' '@{u}..' 2>/dev/null | head -20`
-const MAX_REPOS = 6
+const MAX_REPOS = 40
 const MAX_CHANGES = 60
+const STALE_MS = 30000
+const STALE_PER_LOAD = 4
 const repoOf = new Map<string, string>()
+const gitCache = new Map<string, { at: number; repo: GitRepo | undefined }>()
+let scan = { at: 0, cwd: '', roots: [] as string[] }
 
 async function gitRoot($: EngineInterface, dir: string) {
   const known = repoOf.get(dir)
@@ -230,22 +236,48 @@ async function gitRoot($: EngineInterface, dir: string) {
   return root
 }
 
+// The repo that holds the session folder, and the repos one level below it
+// (by a .git entry); the scan runs again after STALE_MS.
+async function scanRepos($: EngineInterface, cwd: string) {
+  if (scan.cwd === cwd && Date.now() - scan.at < STALE_MS) return scan.roots
+  const roots: string[] = []
+  const own = await gitRoot($, cwd)
+  if (own) roots.push(own)
+  const entries = await $.fs.list(cwd).catch(() => [])
+  for (const e of entries) {
+    if (e.kind !== 'dir' || e.name.startsWith('.') || HIDDEN.has(e.name)) continue
+    const dir = `${cwd}/${e.name}`
+    if (!roots.includes(dir) && (await $.fs.exists(`${dir}/.git`).catch(() => false))) roots.push(dir)
+  }
+  scan = { at: Date.now(), cwd, roots }
+  return roots
+}
+
 async function loadGit($: EngineInterface, home: string, cwd: string): Promise<GitRepo[]> {
   const touched = await read($, touchedAtom)
   const dirs = [...new Set(Object.entries(touched).sort((a, b) => b[1].at - a[1].at).map(([path]) => dirname(path)))]
-  const roots: string[] = []
-  for (const dir of [...dirs, cwd]) {
-    if (roots.length >= MAX_REPOS) break
+  const hot: string[] = []
+  for (const dir of dirs) {
+    if (hot.length >= MAX_REPOS) break
     const root = await gitRoot($, dir)
-    if (root && !roots.includes(root)) roots.push(root)
+    if (root && !hot.includes(root)) hot.push(root)
   }
-  const repos: GitRepo[] = []
-  for (const root of roots) {
+  const roots = [...hot, ...(await scanRepos($, cwd)).filter(r => !hot.includes(r))].slice(0, MAX_REPOS)
+  const now = Date.now()
+  // A repo never read is read now; of the others, the oldest few.
+  const cold = roots.filter(r => !hot.includes(r))
+  const never = cold.filter(r => !gitCache.has(r))
+  const stale = cold.filter(r => gitCache.has(r) && now - gitCache.get(r)!.at > STALE_MS)
+    .sort((a, b) => gitCache.get(a)!.at - gitCache.get(b)!.at).slice(0, STALE_PER_LOAD)
+  await Promise.all([...hot, ...never, ...stale].map(async root => {
     const out = await $.process.run(['sh', '-c', GIT, 'git', root], { timeoutMs: 5000 }).catch(() => undefined)
-    if (!out || out.exitCode !== 0) continue
-    repos.push(parseGit(out.stdout, root, path => shown(path, cwd, home)))
-  }
-  return repos
+    const repo = out && out.exitCode === 0 ? parseGit(out.stdout, root, path => shown(path, cwd, home)) : undefined
+    gitCache.set(root, { at: now, repo })
+  }))
+  return roots.flatMap(root => {
+    const repo = gitCache.get(root)?.repo
+    return repo ? [repo] : []
+  })
 }
 
 export function parseGit(text: string, root: string, show: (path: string) => string): GitRepo {

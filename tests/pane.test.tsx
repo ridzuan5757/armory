@@ -360,7 +360,7 @@ test('jobs send their session and folder, and nothing else from the job file', a
   expect(page).not.toContain('SECRET')
 })
 
-test('the git colony reads the repo of the session folder, joined to FILES by path', async ($, on) => {
+test('the git colony reads the session folder repo and the repos below it', async ($, on) => {
   const pages: string[] = []
   on('command.register', () => ({ value: { command: 'armory' } }))
   on('command.list', () => ({ value: [] }))
@@ -380,13 +380,16 @@ test('the git colony reads the repo of the session folder, joined to FILES by pa
     'abc1234 Add the app',
   ].join('\n')
   on('process.run', (_, e) => {
-    if (e.argv[0] === 'git' && e.argv.includes('rev-parse')) return { value: { exitCode: 0, stdout: '/work\n', stderr: '' } }
-    if (e.argv[0] === 'sh' && e.argv[3] === 'git') return { value: { exitCode: 0, stdout: status, stderr: '' } }
+    if (e.argv[0] === 'git' && e.argv.includes('rev-parse')) return { value: { exitCode: e.argv[2] === '/work' ? 0 : 128, stdout: '/work\n', stderr: '' } }
+    if (e.argv[0] === 'sh' && e.argv[3] === 'git') return { value: { exitCode: 0, stdout: e.argv[4] === '/work' ? status : '## dev\n@@\n@@\n', stderr: '' } }
     return { value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }
   })
-  on('fs.list', () => ({ value: [] }))
+  // /work/lib is a repo one level below; /work/docs is a plain folder.
+  on('fs.list', (_, e) => ({
+    value: e.path === '/work' ? ['lib', 'docs'].map(name => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false })) : [],
+  }))
   on('fs.read', (_, e) => { throw new Error(`ENOENT ${e.path}`) })
-  on('fs.exists', () => ({ value: false }))
+  on('fs.exists', (_, e) => ({ value: e.path === '/work/lib/.git' }))
   on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 
@@ -403,5 +406,5 @@ test('the git colony reads the repo of the session folder, joined to FILES by pa
       { path: 'lib/moved.ts', file: 'lib/moved.ts', state: 'R', add: 0, del: 0 },
     ],
     commits: [{ hash: 'abc1234', subject: 'Add the app' }],
-  }])
+  }, { root: 'lib', name: 'lib', branch: 'dev', upstream: false, ahead: 0, behind: 0, changes: [], commits: [] }])
 })

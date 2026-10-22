@@ -371,7 +371,7 @@ const SHARED_A = `
       // The share of the repo's open changes that this session made.
       const mine = r.changes.filter(c => (onFiles.get(c.file) || {}).at > 0).length;
       node(id, { kind: 'group', type: 'repo', data: Object.assign({ mine }, r), label: r.name + ' \u2387 ' + r.branch,
-        color: HUB.git, r: 5.5 }, 'hub:git', step * (250 + i * 60));
+        color: HUB.git, r: 5.5, dim: !r.changes.length && !r.commits.length }, 'hub:git', step * (250 + i * 60));
       edge('hub:git', id, { w: 1.4 + Math.min(2.4, r.changes.length / 6), rest: 70, k: 0.08 }, step * (100 + i * 60));
       branch(id, HUB.git, [
         ...r.changes.map(c => ({
