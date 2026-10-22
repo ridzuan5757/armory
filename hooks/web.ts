@@ -635,7 +635,10 @@ const SHARED_B = `
       const x = cam.x + view.px + dx;
       view.px = x - b.wrap * Math.round((x - b.x) / b.wrap) - cam.x;
     } else view.px = Math.max(b.x - rx, Math.min(b.x + rx, cam.x + view.px + dx)) - cam.x;
-    view.py = Math.max(b.y - ry, Math.min(b.y + ry, cam.y + view.py + dy)) - cam.y;
+    // Up and down, a map that wraps can move until its north or south edge
+    // is at the middle of the pane, at any zoom.
+    const room = b.wrap ? Math.max(ry, b.h / 2 / cp) : ry;
+    view.py = Math.max(b.y - room, Math.min(b.y + room, cam.y + view.py + dy)) - cam.y;
   }
   if (MAP) {
     // Arrow keys and WASD move the map by a fifth of the pane.

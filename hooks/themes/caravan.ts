@@ -1,19 +1,20 @@
-// Theme 4, caravan: a world first, then the colonies on it. A diamond-square
-// height map and a moisture map make one island continent with seas, beaches,
-// deserts, plains, grassland, forests, hills, mountains, snow peaks and a
-// volcano on the highest peak. Rivers flow from the heights to the sea. Each
+// Theme 4, caravan: a world first, then the colonies on it. The Earth's land,
+// with diamond-square height and moisture maps, gives seas, beaches, deserts,
+// plains, grassland, forests, hills, mountains, snow peaks and famous
+// volcanoes. Rivers flow from the heights to the sea. Plate faults make
+// earthquakes that change the land for years. Each
 // colony gets a city on good land and grows a territory by travel cost, so
 // borders follow coasts and bend around mountains. Horses plan routes with A*
 // over the terrain, take boats over water, carry crates from city to city,
 // bring a red envelope to each file a tool uses, and swarm to a glowing file
-// in shades. At each file write the volcano erupts.
+// in shades. At each file write the volcano nearest FILES erupts.
 import type { Theme } from '../web'
 
 import { HORSE_KIT } from './horse'
 
 export const CARAVAN: Theme = {
   name: 'caravan',
-  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · 1 hour = 1 year: each season brings floods, wildfires, storms, blizzards or earthquakes that slow the horses · clouds follow the wind belts · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
+  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · famous volcanoes grow, erupt and cool; the nearest one erupts at each write · earthquakes on the plate faults leave rifts, rivers and new hills · 1 hour = 1 year: each season brings floods, tornadoes, wildfires, droughts, storms or blizzards that slow the horses · clouds follow the wind belts · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
   const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:jobs', 'hub:memory', 'hub:sessions'];
@@ -23,7 +24,7 @@ export const CARAVAN: Theme = {
   }
 
   // The hex map, in axial coordinates (q, r).
-  const TILE = 13, GAP = 2, COLS = 72, ROWS = 36;
+  const TILE = 13, GAP = 2, COLS = 120, ROWS = 47, DEG = 3, SOUTH = 80 - ROWS * DEG;
   // The map's middle is the world origin.
   const OX = TILE * Math.sqrt(3) * (COLS - 0.5) / 2, OY = TILE * 1.5 * (ROWS - 1) / 2;
   const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
@@ -145,46 +146,57 @@ export const CARAVAN: Theme = {
     const fx = x - x0, fy = y - y0, g = map.g, n = map.n;
     return (g[y0 * n + x0] * (1 - fx) + g[y0 * n + x1] * fx) * (1 - fy) + (g[y1 * n + x0] * (1 - fx) + g[y1 * n + x1] * fx) * fy;
   }
-  // The Earth: a land mask of 72 x 36 tiles, 5 degrees of longitude each,
-  // from 80 N to 60 S, from the Natural Earth 1:110m land (public domain).
-  // Odd rows move half a tile east, as on a hex map. '#' is land.
+  // The Earth: a land mask of 120 x 47 tiles, DEG (3) degrees each, from
+  // 80 N to 61 S, from the Natural Earth 1:110m land (public domain). Odd
+  // rows move half a tile east, as on a hex map. '#' is land.
   const EARTH =
-    '.............#..#..#############.......##...............................' +
-    '...........#............#######...............#......####...............' +
-    '....##....#..###.#.###...######..........#.......###################....' +
-    '#.#################..##..###....#.....####.############################.' +
-    '...###############.##.#...#..........##################################.' +
-    '...##...#########...###...........#...#.########################...#....' +
-    '..........##############..........##...########################....#....' +
-    '..........##############...........#############################........' +
-    '...........############.............#######.#####################.......' +
-    '...........##########.............##...##...#.################..........' +
-    '...........##########.............##....######.#############.#..........' +
-    '...........#########..............####..#..################...##........' +
-    '.............#######..............#####.#..#################............' +
-    '.............###.................#########.##.##############............' +
-    '...............#.................##########.####..#########.............' +
-    '....#.........##.#..............###########.###...###.####..............' +
-    '.................#...............###########.#.....#....##..............' +
-    '..................#..#..........############............#...#...........' +
-    '....................####.........#############.....#........#...........' +
-    '....................#####............########.............#.............' +
-    '....................######............#######...........#.##............' +
-    '...................#########..........#####.............#.##..##........' +
-    '....................#########..........#####.............##.....#.......' +
-    '....................########..........######............................' +
-    '.....................#######..........######.#...............##.#.......' +
-    '.....................#######..........#####.#...............#####.......' +
-    '......................#####............####..#.............#######......' +
-    '.....................#####.............###................########......' +
-    '......................####..............##.................########.....' +
-    '.....................####..............#.......................###......' +
-    '.....................###...............................................#' +
-    '.....................##.................................................' +
-    '.....................##.................................................' +
-    '....................##..................................................' +
-    '.....................##.................................................' +
-    '........................................................................';
+    '......................#..###.#.####.#################...........##...........................##.........................' +
+    '....................####..#..####.......#############..........................##........########........###............' +
+    '..................##.####.###.###.........###########........................##....#...################...##............' +
+    '.....########..####..####.#.#..#..###....#.########...............#####.........#.#################################.###.' +
+    '###...##########################...####...######................#######.##.#############################################' +
+    '..#..########################...#..###....####................####.####################################################.' +
+    '.....########################.....###........#................####.#############################################..###...' +
+    '........#......##############.....#####...................#....##...######################################......##......' +
+    '................#########################................#.#.....#.#######################################......##......' +
+    '.................########################.................##.#############################################..............' +
+    '...................###################..##................##################################################............' +
+    '..................#####################....................##########.#.###..############################...............' +
+    '...................#################.....................####...#.###.....##..##########################...#............' +
+    '..................#################.....................###...#...#.########.######################..#....#.............' +
+    '...................################.........................####...#....############################..#..##.............' +
+    '....................#############........................######........#############################....................' +
+    '.....................############........................#########.#################################....................' +
+    '.....................#.####.....#......................#####################.#######################....................' +
+    '........................###............................######################.#...###################...................' +
+    '........................###......#....................##################.######....######.#####.#.......................' +
+    '.........................###.##....##..................##################.#####.....####...####.#.......................' +
+    '............................####......................###################.###.......##......####...#....................' +
+    '...............................#......................####################...........##.......##.....#..................' +
+    '...............................#..#####................#####################.........#......#.#.....#...................' +
+    '..................................#######...............####################.................#.......#..................' +
+    '..................................########.....................############.................##...##.....................' +
+    '.................................##########....................###########...................#..###.#...................' +
+    '.................................############..................##########....................##.##.#.....#..............' +
+    '.................................###############................#########.................................#####.........' +
+    '.................................###############................#########........................#.#.#....#.#...........' +
+    '..................................##############.................########..................................#............' +
+    '..................................#############.................#########..#.........................#.##...............' +
+    '....................................###########.................#########..#.........................########..........#' +
+    '....................................##########..................#######...##.......................##########.....#.....' +
+    '.....................................########....................#######...#......................############..........' +
+    '....................................#######......................#####...........................##############.........' +
+    '....................................#######.......................####............................#############.........' +
+    '....................................######........................###.............................###...######..........' +
+    '....................................#####.................................................................####..........' +
+    '...................................#####....................................................................#.........#.' +
+    '...................................###......................................................................#........##.' +
+    '...................................###.............................................................................##...' +
+    '...................................###..................................................................................' +
+    '..................................###...................................................................................' +
+    '...................................##...................................................................................' +
+    '........................................................................................................................' +
+    '........................................................................................................................';
   const SEED = 2026;
   const HEIGHT = diamondSquare(7, 0.55, SEED), MOIST = diamondSquare(7, 0.6, SEED + 7);
   const axial = (col, row) => [col - (row - (row & 1)) / 2, row];
@@ -192,7 +204,7 @@ export const CARAVAN: Theme = {
   const TERRAIN = {
     deep: '#1f3f5c', water: '#2f5c7a', sand: '#c2b280', desert: '#b8955a', plains: '#7d8a45', grass: '#4f7a3f',
     forest: '#3d6136', jungle: '#2c5a30', tundra: '#7f8c7a', hills: '#7a6a48', mountain: '#6c6c6c', snow: '#d8dde3',
-    ice: '#e4ebf0', volcano: '#4a3a35',
+    ice: '#e4ebf0', volcano: '#4a3a35', lava: '#c8401e', ash: '#6a6460', rift: '#3a2d26',
   };
   const WET = { deep: 1, water: 1 };
   // Land a colony may hold: not water, snow, ice or the volcano.
@@ -204,7 +216,7 @@ export const CARAVAN: Theme = {
   // latitude: ice and tundra near the poles, deserts near the tropics, jungle
   // at the equator. Moisture from the fractal map, plus a wet or dry belt
   // for the latitude, sets the biome of the lowland.
-  let tiles = new Map(), volcano = '', rivers = [], riverSet = new Set();
+  let tiles = new Map(), rivers = [], riverSet = new Set(), baseRivers = [];
   function buildWorld() {
     tiles = new Map();
     for (let row = 0; row < ROWS; row++) {
@@ -224,7 +236,7 @@ export const CARAVAN: Theme = {
     const land = [];
     for (const [k, tl] of tiles) {
       const u = tl.col / (COLS - 1), v = tl.row / (ROWS - 1), d = coast.get(k) || 9;
-      tl.lat = 80 - (tl.row + 0.5) * 140 / ROWS;
+      tl.lat = 80 - (tl.row + 0.5) * DEG;
       tl.coast = d;
       if (!tl.land) { tl.h = -0.1 * d; tl.terrain = d <= 2 ? 'water' : 'deep'; continue; }
       const a = Math.abs(tl.lat);
@@ -252,36 +264,25 @@ export const CARAVAN: Theme = {
       else if (tl.m < wet) tl.terrain = 'grass';
       else tl.terrain = a < 15 ? 'jungle' : 'forest';
     }
-    // The volcano: the highest tile out of the cold.
-    let vh = -1;
-    for (const tl of land) if (Math.abs(tl.lat) < 55 && tl.h > vh) { vh = tl.h; volcano = tkey(tl.q, tl.r); }
-    tiles.get(volcano).terrain = 'volcano';
-    // Rivers: from up to seven high tiles at least six apart, downhill to the
-    // sea. In a hollow the river takes the lowest way on, three times at most.
+    // Famous volcanoes on their real places; one on a sea tile makes an
+    // island. Two on one tile keep the first.
+    volcanoes = [];
+    for (const [name, lat, lon] of VOLCANO_SITES) {
+      const k = tileOf(lat, lon), tl = k && tiles.get(k);
+      if (!tl || volcanoes.some(v => v.k === k)) continue;
+      tl.terrain = 'volcano'; tl.land = true; tl.h = Math.max(tl.h, 0.9);
+      volcanoes.push({ name, k, q: tl.q, r: tl.r, period: 8 + 16 * hash(name), off: hash(name + '~') });
+    }
+    // Rivers: from up to twelve high tiles at least six apart, downhill to the
+    // sea.
     rivers = [];
     riverSet = new Set();
     const highs = land.filter(tl => tl.h > 0.6 && tl.terrain !== 'ice' && tl.terrain !== 'volcano').sort((p, q) => q.h - p.h).map(tl => tkey(tl.q, tl.r));
     for (const sk of highs) {
-      if (rivers.length >= 7) break;
-      if ([...riverSet, volcano].some(k => tdist(unkey(k), unkey(sk)) < 6)) continue;
-      const path = [sk];
-      let cur = unkey(sk), pits = 0;
-      for (let step = 0; step < 40; step++) {
-        let best, low = Infinity;
-        for (const [dq, dr] of DIRS) {
-          const k = tkey(cur[0] + dq, cur[1] + dr);
-          if (!tiles.has(k) || path.includes(k)) continue;
-          // A small random push, so the river changes direction now and then.
-          const v = tiles.get(k).h + 0.06 * hash('flow' + k);
-          if (v < low) { low = v; best = k; }
-        }
-        if (!best) break;
-        if (low >= tiles.get(tkey(...cur)).h + 0.03 && ++pits > 3) break;
-        path.push(best);
-        cur = unkey(best);
-        if (WET[tiles.get(best).terrain]) break;
-      }
-      if (path.length >= 4 && WET[tiles.get(path[path.length - 1]).terrain]) { rivers.push(path); path.forEach(k => riverSet.add(k)); }
+      if (rivers.length >= 12) break;
+      if ([...riverSet, ...volcanoes.map(v => v.k)].some(k => tdist(unkey(k), unkey(sk)) < 6)) continue;
+      const path = traceRiver(sk);
+      if (path) { rivers.push(path); path.forEach(k => riverSet.add(k)); }
     }
     // Land by a river is wetter: a desert there turns to plains.
     for (const k of riverSet) {
@@ -290,11 +291,56 @@ export const CARAVAN: Theme = {
         if (tl && tl.terrain === 'desert') tl.terrain = 'plains';
       }
     }
+    // The land as built; earthquakes and volcanoes change it over time, and
+    // the land goes back to this when their effects end.
+    for (const tl of tiles.values()) { tl.base = tl.terrain; tl.baseLand = tl.land; }
+    baseRivers = rivers.slice();
   }
+
+  // A river from a tile downhill to the sea, or undefined when it does not
+  // reach the sea in four tiles or more. In a hollow the river takes the
+  // lowest way on, three times at most.
+  function traceRiver(sk) {
+    const path = [sk];
+    let cur = unkey(sk), pits = 0;
+    for (let step = 0; step < 40; step++) {
+      let best, low = Infinity;
+      for (const [dq, dr] of DIRS) {
+        const k = tkey(cur[0] + dq, cur[1] + dr);
+        if (!tiles.has(k) || path.includes(k)) continue;
+        // A small random push, so the river changes direction now and then.
+        const v = tiles.get(k).h + 0.06 * hash('flow' + k);
+        if (v < low) { low = v; best = k; }
+      }
+      if (!best) break;
+      if (low >= tiles.get(tkey(...cur)).h + 0.03 && ++pits > 3) break;
+      path.push(best);
+      cur = unkey(best);
+      if (WET[tiles.get(best).terrain]) break;
+    }
+    return path.length >= 4 && WET[tiles.get(path[path.length - 1]).terrain] ? path : undefined;
+  }
+
+  // The tile at a latitude and longitude, as the mask samples them (odd rows
+  // half a tile east); undefined outside 80 N to SOUTH.
+  function tileOf(lat, lon) {
+    if (lat > 80 || lat < SOUTH) return undefined;
+    const row = Math.min(ROWS - 1, Math.floor((80 - lat) / DEG));
+    const col = Math.round((((lon + 180) % 360 + 360) % 360) / DEG - 0.5 - 0.5 * (row & 1));
+    return tkey(...axial(((col % COLS) + COLS) % COLS, row));
+  }
+
+  const VOLCANO_SITES = [
+    ['Fuji', 35.36, 138.73], ['Vesuvius', 40.82, 14.43], ['Etna', 37.75, 14.99], ['Krakatoa', -6.10, 105.42],
+    ['Merapi', -7.54, 110.45], ['Tambora', -8.25, 117.99], ['Pinatubo', 15.13, 120.35], ['Mount St. Helens', 46.19, -122.19],
+    ['Mauna Loa', 19.48, -155.60], ['Popocatepetl', 19.02, -98.62], ['Cotopaxi', -0.68, -78.44], ['Villarrica', -39.42, -71.93],
+    ['Kilimanjaro', -3.07, 37.35], ['Eyjafjallajokull', 63.63, -19.62], ['Ruapehu', -39.28, 175.57], ['Klyuchevskaya', 56.06, 160.64],
+  ];
+  let volcanoes = [];
 
   // The cost of entering a tile. Roads are fast; water needs a boat; a river
   // costs extra to cross, except over a bridge (a road tile).
-  const COST = { deep: 2, water: 1.5, sand: 1, desert: 1.5, plains: 1, grass: 1, forest: 2, jungle: 2.5, tundra: 1.5, hills: 3, mountain: 6, snow: 8, ice: 8, volcano: 10 };
+  const COST = { lava: 12, ash: 3, rift: 5, deep: 2, water: 1.5, sand: 1, desert: 1.5, plains: 1, grass: 1, forest: 2, jungle: 2.5, tundra: 1.5, hills: 3, mountain: 6, snow: 8, ice: 8, volcano: 10 };
   let roads = [], roadSet = new Set();
   function baseCost(k) {
     const tl = tiles.get(k);
@@ -429,7 +475,7 @@ export const CARAVAN: Theme = {
     // nearest the FILES city (with room for territories between the cities).
     const near = bySize.includes('hub:git') && bySize.includes('hub:files');
     const rest = near ? bySize.filter(c => c !== 'hub:git') : bySize;
-    let sites = [], gap = 14;
+    let sites = [], gap = Math.round(70 / DEG);
     for (; gap >= 2 && sites.length < rest.length; gap--) {
       sites = [];
       for (const k of ranked) {
@@ -628,10 +674,15 @@ export const CARAVAN: Theme = {
   // season, from a seed of the season's number; six in ten come within four
   // tiles of a road. About two are active at a time. A kind needs its
   // local season and its land: floods on rivers in spring, wildfires in
-  // forest, jungle and grassland in summer, tropical storms at sea near the
-  // coast in autumn, blizzards at high latitudes in winter; earthquakes in
-  // hills and mountains at any time, less often. Each lasts three to six real
-  // minutes. Inside one, a tile costs mult times more to cross.
+  // forest, jungle and grassland and droughts on dry land in summer, tropical
+  // storms at sea near the coast in autumn, blizzards at high latitudes in
+  // winter. Tornadoes follow the wind model (when): they form on plains and
+  // grassland where the westerlies meet the warm tropical air (30 to 40
+  // degrees from the belt line, which moves with the seasons), in the warm
+  // half of that hemisphere's year, and they move east with the westerlies,
+  // one tile every TORNADO_STEP, until they reach the sea. (Earthquakes come
+  // from the faults: see Tectonics.) Each lasts three to six real minutes. Inside one, a tile
+  // costs mult times more to cross.
   const HAZARD = {
     flood: { name: 'Flood', season: 0, mult: 3, color: '#4f9fd0', r: [1, 2], land: true,
       place: tl => tl.land && (riverSet.has(tkey(tl.q, tl.r)) || DIRS.some(([dq, dr]) => riverSet.has(tkey(tl.q + dq, tl.r + dr)))) },
@@ -641,26 +692,39 @@ export const CARAVAN: Theme = {
       place: tl => WET[tl.terrain] && tl.coast <= 3 && Math.abs(tl.lat) > 8 && Math.abs(tl.lat) < 35 },
     blizzard: { name: 'Blizzard', season: 3, mult: 4, color: '#eef4f8', r: [1, 2], land: true,
       place: tl => tl.land && Math.abs(tl.lat) > 38 && tl.terrain !== 'ice' },
-    quake: { name: 'Earthquake', season: -1, mult: 2.5, color: '#c9a06a', r: [1, 1], land: true,
-      place: tl => tl.terrain === 'hills' || tl.terrain === 'mountain' || tl.terrain === 'snow' },
+    tornado: { name: 'Tornado', season: -1, mult: 3, color: '#9aa3ad', r: [1, 1], land: true, moves: true,
+      place: tl => tl.terrain === 'plains' || tl.terrain === 'grass',
+      when: (tl, n) => {
+        const local = seasonAt(tl.lat, ((n % 4) + 4) % 4), a = Math.abs(tl.lat - shiftOf((((n % 4) + 4) % 4 + 0.5) / 4));
+        return local <= 1 && a >= 30 && a <= 40;
+      } },
+    drought: { name: 'Drought', season: 1, mult: 2, color: '#d9a441', r: [2, 3], land: true,
+      place: tl => (tl.terrain === 'desert' || tl.terrain === 'plains' || tl.terrain === 'grass' || tl.terrain === 'sand') && Math.abs(tl.lat) < 40 },
   };
+  const TORNADO_STEP = 40000;
   const seasonDisasters = new Map();
   function disastersOf(n) {
     if (seasonDisasters.has(n)) return seasonDisasters.get(n);
     const rnd = rng(n * 7919 + 13), north = ((n % 4) + 4) % 4, kinds = Object.keys(HAZARD), out = [];
     const count = 5 + Math.floor(rnd() * 4);
+    // The tiles within four steps of a road, by breadth-first steps.
+    const nearRoad = new Map([...roadSet].map(k => [k, 0]));
+    for (const [k, d] of nearRoad) {
+      if (d >= 4) continue;
+      const [q, r] = unkey(k);
+      for (const [dq, dr] of DIRS) { const nk = tkey(q + dq, r + dr); if (tiles.has(nk) && !nearRoad.has(nk)) nearRoad.set(nk, d + 1); }
+    }
     for (let tries = 0; out.length < count && tries < 60; tries++) {
       const kind = kinds[Math.floor(rnd() * kinds.length)], hz = HAZARD[kind];
-      if (kind === 'quake' && rnd() > 0.4) continue;
-      const spots = [...tiles.values()].filter(tl => hz.place(tl) && (hz.season < 0 || seasonAt(tl.lat, north) === hz.season)
+      const spots = [...tiles.values()].filter(tl => hz.place(tl) && (hz.when ? hz.when(tl, n) : hz.season < 0 || seasonAt(tl.lat, north) === hz.season)
         && out.every(d => tdist([d.q, d.r], [tl.q, tl.r]) > 5));
       if (!spots.length) continue;
       // Most disasters come near a road, where the caravans travel.
-      const near = spots.filter(tl => [...roadSet].some(k => tdist(unkey(k), [tl.q, tl.r]) <= 4));
+      const near = spots.filter(tl => nearRoad.has(tkey(tl.q, tl.r)));
       const pool = near.length && rnd() < 0.6 ? near : spots;
       const at = pool[Math.floor(rnd() * pool.length)];
       const start = EPOCH + n * SEASON_MS + rnd() * SEASON_MS;
-      out.push({ id: n + ':' + out.length, kind, q: at.q, r: at.r, radius: hz.r[0] + Math.floor(rnd() * (hz.r[1] - hz.r[0] + 1)),
+      out.push({ id: n + ':' + out.length, kind, q: at.q, r: at.r, q0: at.q, r0: at.r, radius: hz.r[0] + Math.floor(rnd() * (hz.r[1] - hz.r[0] + 1)),
         start, end: start + 180000 + rnd() * 180000 });
     }
     seasonDisasters.set(n, out);
@@ -674,7 +738,21 @@ export const CARAVAN: Theme = {
     if (!tiles.size) return;
     const now = worldNow(), { n } = calendar();
     active = [...disastersOf(n - 1), ...disastersOf(n)].filter(d => now >= d.start && now < d.end);
-    const key = active.map(d => d.id).join(',');
+    // A tornado moves east with the westerlies, one tile a step, and ends
+    // when it reaches the sea.
+    for (const d of active) {
+      if (!HAZARD[d.kind].moves) continue;
+      let q = d.q0, r = d.r0;
+      d.gone = false;
+      for (let i = Math.floor((now - d.start) / TORNADO_STEP); i > 0; i--) {
+        const [nq, nr] = unkey(tkey(q + 1, r));
+        if (WET[tiles.get(tkey(nq, nr)).terrain]) { d.gone = true; break; }
+        q = nq; r = nr;
+      }
+      d.q = q; d.r = r;
+    }
+    active = active.filter(d => !d.gone);
+    const key = active.map(d => d.id + '@' + d.q + ',' + d.r).join(',') + '|' + liveQuakes.map(q => q.id).join(',');
     if (key === hazardKey) return;
     hazardKey = key; hazardGen++;
     hazard = new Map();
@@ -690,7 +768,175 @@ export const CARAVAN: Theme = {
         }
       }
     }
+    // An earthquake shakes the land around it for QUAKE_LIVE: cost x2.
+    for (const q of liveQuakes) {
+      const [eq, er] = unkey(q.key);
+      for (let k = 0; k <= (q.M >= 7 ? 2 : 1); k++) {
+        for (const c of k ? ringAround(eq, er, k) : [[eq, er]]) {
+          const ck = tkey(...c), tl = tiles.get(ck);
+          if (tl && tl.land) hazard.set(ck, Math.max(hazard.get(ck) || 1, 2));
+        }
+      }
+    }
     plans.clear();
+  }
+
+  // Tectonics: earthquakes come from the plate faults, at their own pace.
+  // Each fault (a line of real plate boundary points) builds stress and
+  // releases it about once a period (in years); the k-th quake comes near
+  // k periods, a little early or late, and the longer the wait since the
+  // last one, the larger it is (M5 to M8.5). Its effects last: from M6.5 a
+  // crevasse (rift) along the fault, from M7 sometimes a new river, from
+  // M7.3 uplift (the land around goes one level up), from M7.8 a coast that
+  // sinks into the sea. They last 6 to 48 years, by magnitude, and then
+  // erosion gives the land back. Everything comes from the clock, so the
+  // world is the same in every session.
+  const FAULTS = [
+    ['Aleutian Arc', 0.6, [[60, -150], [57, -155], [53, -170], [52, 175], [55, 163]]],
+    ['Kamchatka-Japan Trench', 0.4, [[60, 163], [52, 158], [44, 147], [36, 141], [33, 135]]],
+    ['Philippine-Indonesia Arc', 0.35, [[33, 135], [24, 125], [14, 121], [5, 127], [-5, 130], [-8, 120], [-8, 110], [-5, 102], [5, 95]]],
+    ['Tonga-New Zealand Arc', 0.5, [[-15, -173], [-25, -176], [-38, 178], [-46, 167]]],
+    ['Cascadia-San Andreas', 0.7, [[60, -150], [55, -135], [48, -125], [40, -124], [32, -117], [20, -105]]],
+    ['Central America Trench', 0.5, [[20, -105], [14, -92], [10, -84]]],
+    ['Andes', 0.4, [[10, -84], [-5, -81], [-20, -71], [-40, -74], [-55, -70]]],
+    ['Mid-Atlantic Ridge', 0.9, [[65, -18], [50, -29], [35, -35], [15, -46], [0, -20], [-20, -13], [-45, -15]]],
+    ['Alpine-Himalayan Belt', 0.45, [[37, -10], [38, 15], [38, 28], [37, 45], [30, 60], [30, 70], [29, 85], [27, 95], [20, 96], [5, 95]]],
+    ['East African Rift', 0.8, [[12, 43], [5, 38], [-3, 36], [-12, 34], [-20, 35]]],
+  ];
+  const QUAKE_LIVE = 90000, KEEP_YEARS = 48;
+  const UP = { sand: 'plains', desert: 'hills', plains: 'hills', grass: 'hills', forest: 'hills', jungle: 'hills', tundra: 'hills',
+    hills: 'mountain', mountain: 'snow', rift: 'hills' };
+  let faults = [];
+  function buildFaults() {
+    faults = FAULTS.map(([name, period, pts], i) => {
+      const keys = [];
+      for (let j = 1; j < pts.length; j++) {
+        const [la0, lo0] = pts[j - 1], [la1, lo1] = pts[j];
+        const dl = lo1 - lo0 - 360 * Math.round((lo1 - lo0) / 360);
+        const steps = Math.ceil(Math.hypot(la1 - la0, dl) / 1.5);
+        for (let s2 = 0; s2 <= steps; s2++) {
+          const k = tileOf(la0 + (la1 - la0) * s2 / steps, lo0 + dl * s2 / steps);
+          if (k && !keys.includes(k)) keys.push(k);
+        }
+      }
+      return { name, period, keys, i };
+    });
+  }
+  const quakeCache = new Map();
+  function quakeOf(f, k) {
+    const id = f.i + ':' + k;
+    if (quakeCache.has(id)) return quakeCache.get(id);
+    const yearOf = j => (j + 0.7 * (rng(f.i * 100003 + j * 7 + 1)() - 0.5)) * f.period;
+    const y = yearOf(k), wait = y - yearOf(k - 1), rnd = rng(f.i * 7907 + k * 13 + 5);
+    // Most quakes are small and few are large, as in nature: the power 2.5
+    // bends the wait into the magnitude.
+    const M = Math.round((5 + 3.5 * Math.pow(Math.max(0, Math.min(1, (wait / f.period - 0.3) / 1.4)), 2.5) + 0.3 * (rnd() - 0.5)) * 10) / 10;
+    const idx = Math.floor(rnd() * f.keys.length);
+    const q = { id, fault: f.name, f, k, at: EPOCH + y * YEAR_MS, M, idx, key: f.keys[idx], rnd: rnd(),
+      lasts: M >= 6.5 ? (6 + 42 * Math.min(1, (M - 6.5) / 2)) * YEAR_MS : 0 };
+    quakeCache.set(id, q);
+    return q;
+  }
+  function quakesBetween(t0, t1) {
+    const out = [];
+    for (const f of faults) {
+      if (!f.keys.length) continue;
+      const y0 = (t0 - EPOCH) / YEAR_MS, y1 = (t1 - EPOCH) / YEAR_MS;
+      for (let k = Math.floor(y0 / f.period) - 1; k <= Math.ceil(y1 / f.period) + 1; k++) {
+        const q = quakeOf(f, k);
+        if (q.at >= t0 && q.at < t1) out.push(q);
+      }
+    }
+    return out.sort((a, b) => a.at - b.at);
+  }
+  // What a quake changes, on the land as built.
+  function effectsOf(q) {
+    if (q.effects) return q.effects;
+    const e = { rift: [], up: [], sink: [], river: undefined };
+    const [eq, er] = unkey(q.key), around = [...DIRS.map(([dq, dr]) => tkey(eq + dq, er + dr)), q.key].filter(k => tiles.has(k));
+    if (q.M >= 6.5) {
+      const n = 1 + Math.round((q.M - 6.5) * 2);
+      for (let j = q.idx - Math.floor(n / 2); j < q.idx - Math.floor(n / 2) + n; j++) {
+        const k = q.f.keys[j], tl = k && tiles.get(k);
+        if (tl && tl.baseLand && tl.base !== 'volcano') e.rift.push(k);
+      }
+    }
+    if (q.M >= 7.3) e.up = around.filter(k => tiles.get(k).baseLand && tiles.get(k).base !== 'volcano' && !e.rift.includes(k));
+    if (q.M >= 7 && q.rnd < 0.5) {
+      const start = around.filter(k => tiles.get(k).baseLand).sort((a, b) => tiles.get(b).h - tiles.get(a).h)[0];
+      if (start) e.river = traceRiver(start);
+    }
+    if (q.M >= 7.8) e.sink = around.filter(k => tiles.get(k).baseLand && tiles.get(k).coast === 1 && tiles.get(k).base !== 'volcano').slice(0, 2);
+    q.effects = e;
+    return e;
+  }
+
+  // A volcano's cycle, from the clock: dormant for 70 % of its period, then
+  // growing (the cone rises, hills and then mountain slopes spread up to two
+  // tiles), erupting (lava up to two tiles; on a coast the lava makes new
+  // land), and cooling (the lava turns to ash and the area shrinks back). A
+  // strong earthquake (M7.8 or more) within four tiles wakes a dormant
+  // volcano: it grows at once and erupts 18 % of a period later. While a
+  // volcano grows or erupts, its ground trembles.
+  function volcanoState(v, now, wake) {
+    const stageAt = u => {
+      if (u < 0.7) return { stage: 'dormant', r: 0, size: 0.7 };
+      if (u < 0.88) { const g = (u - 0.7) / 0.18; return { stage: 'growing', r: Math.round(2 * g), size: 0.7 + 0.6 * g }; }
+      if (u < 0.92) return { stage: 'erupting', r: 2, size: 1.3 };
+      const c = (u - 0.92) / 0.08;
+      return { stage: 'cooling', r: Math.round(2 * (1 - c)), size: 1.3 - 0.6 * c };
+    };
+    const own = stageAt((((now - EPOCH) / YEAR_MS / v.period + v.off) % 1 + 1) % 1);
+    if (own.stage !== 'dormant' || !wake) return own;
+    const e = (now - wake.at) / (v.period * YEAR_MS);
+    return e < 0.3 ? Object.assign(stageAt(0.7 + e), { woken: wake }) : own;
+  }
+
+  let terraKey = '', terraGen = 0, changed = new Set(), liveQuakes = [], lastTerra = -Infinity;
+  function updateTectonics() {
+    if (!tiles.size) return;
+    if (!faults.length) buildFaults();
+    const now = worldNow();
+    if (Math.abs(now - lastTerra) < 1000) return;
+    lastTerra = now;
+    const recent = quakesBetween(now - KEEP_YEARS * YEAR_MS, now + 1);
+    liveQuakes = recent.filter(q => now - q.at < QUAKE_LIVE);
+    const lasting = recent.filter(q => q.lasts && now < q.at + q.lasts);
+    const states = volcanoes.map(v => {
+      const wake = recent.filter(q => q.M >= 7.8 && now - q.at < 0.3 * v.period * YEAR_MS && tdist(unkey(q.key), [v.q, v.r]) <= 4).pop();
+      return volcanoState(v, now, wake);
+    });
+    volcanoes.forEach((v, i) => { v.state = states[i]; });
+    const key = lasting.map(q => q.id).join(',') + '|' + states.map(st => st.stage + st.r).join(',');
+    if (key === terraKey) return;
+    terraKey = key;
+    terraGen++;
+    for (const k of changed) { const tl = tiles.get(k); tl.terrain = tl.base; tl.land = tl.baseLand; }
+    changed = new Set();
+    const set = (k, terrain, land) => { const tl = tiles.get(k); if (!tl) return; tl.terrain = terrain; if (land !== undefined) tl.land = land; changed.add(k); };
+    const quakeRivers = [];
+    for (const q of lasting) {
+      const e = effectsOf(q);
+      for (const k of e.up) set(k, UP[tiles.get(k).terrain] || tiles.get(k).terrain);
+      for (const k of e.rift) set(k, 'rift');
+      for (const k of e.sink) set(k, 'water', false);
+      if (e.river) quakeRivers.push(e.river);
+    }
+    volcanoes.forEach(v => {
+      const st = v.state;
+      for (let d = 1; d <= st.r; d++) {
+        for (const c of ringAround(v.q, v.r, d)) {
+          const k = tkey(...c), tl = tiles.get(k);
+          if (!tl || tl.terrain === 'volcano') continue;
+          if (st.stage === 'growing') { if (tl.land) set(k, d === 1 ? 'mountain' : 'hills'); }
+          else if (tl.land || d === 1) set(k, st.stage === 'erupting' ? 'lava' : 'ash', true);
+        }
+      }
+    });
+    rivers = [...baseRivers, ...quakeRivers];
+    riverSet = new Set(rivers.flat());
+    plans.clear();
+    hazardKey = '';
   }
 
   // Caravans: one horse per city and one per running job or busy session.
@@ -703,6 +949,7 @@ export const CARAVAN: Theme = {
   let lastSim = 0, rest = 0, lastWrite = 0;
   function simulate() {
     if (gen !== layoutGen || nodes.size !== layoutSize) { layout(); layoutGen = gen; layoutSize = nodes.size; }
+    updateTectonics();
     updateHazards();
     const now = performance.now();
     const dt = lastSim ? Math.min(0.1, (now - lastSim) / 1000) : 0;
@@ -825,6 +1072,15 @@ export const CARAVAN: Theme = {
     } else if (kind === 'desert') {
       pen.strokeStyle = rgba('#8a6a38', 0.8 * fade); pen.lineWidth = Math.max(0.6, 0.06 * u);
       for (const dy of [-0.1, 0.2]) { pen.beginPath(); pen.arc(x, y + dy * u + 0.3 * u, 0.35 * u, Math.PI * 1.2, Math.PI * 1.8); pen.stroke(); }
+    } else if (kind === 'lava') {
+      pen.strokeStyle = rgba('#ffb03a', 0.95 * fade); pen.lineWidth = Math.max(0.8, 0.09 * u);
+      pen.beginPath(); pen.moveTo(x - 0.4 * u, y - 0.1 * u); pen.lineTo(x - 0.1 * u, y + 0.15 * u); pen.lineTo(x + 0.15 * u, y - 0.15 * u); pen.lineTo(x + 0.4 * u, y + 0.1 * u); pen.stroke();
+    } else if (kind === 'ash') {
+      pen.fillStyle = rgba('#9a948e', 0.8 * fade);
+      for (const [dx, dy] of [[-0.25, -0.1], [0.2, 0.05], [-0.05, 0.25], [0.1, -0.25]]) { pen.beginPath(); pen.arc(x + dx * u, y + dy * u, Math.max(0.5, 0.06 * u), 0, 6.2832); pen.fill(); }
+    } else if (kind === 'rift') {
+      pen.strokeStyle = rgba('#120c08', 0.95 * fade); pen.lineWidth = Math.max(1, 0.12 * u);
+      pen.beginPath(); pen.moveTo(x - 0.45 * u, y - 0.1 * u); pen.lineTo(x - 0.15 * u, y + 0.1 * u); pen.lineTo(x + 0.1 * u, y - 0.12 * u); pen.lineTo(x + 0.45 * u, y + 0.08 * u); pen.stroke();
     } else if (kind === 'tundra') {
       pen.fillStyle = rgba('#c9d2c6', 0.7 * fade);
       for (const [dx, dy] of [[-0.25, 0], [0.2, -0.15], [0.05, 0.25]]) { pen.fillRect(x + dx * u, y + dy * u, Math.max(1, 0.12 * u), Math.max(0.6, 0.05 * u)); }
@@ -837,35 +1093,92 @@ export const CARAVAN: Theme = {
     }
   }
 
-  // The volcano: a dark cone with a glowing crater and a column of smoke.
-  // At each file write it erupts: lava bursts from the crater for 4 s.
+  // The volcanoes: dark cones sized by their cycle, a glowing crater and a
+  // column of smoke, with the name below. A growing or erupting one has a
+  // thicker column and trembling rings; an erupting one throws lava. At each
+  // file write the volcano nearest the FILES city erupts for 4 s.
   function drawVolcano(t) {
-    if (!volcano) return;
-    const c = centerOf(volcano), base = screen(c.x, c.y, 0), u = TILE * base.f;
-    const burst = Math.max(0, 1 - (Date.now() - lastWrite) / 4000);
-    pen.fillStyle = 'rgba(64,52,48,0.98)';
-    pen.beginPath(); pen.moveTo(base.x - 0.75 * u, base.y + 0.4 * u); pen.lineTo(base.x - 0.18 * u, base.y - 0.75 * u); pen.lineTo(base.x + 0.18 * u, base.y - 0.75 * u); pen.lineTo(base.x + 0.75 * u, base.y + 0.4 * u); pen.closePath(); pen.fill();
-    const cx = base.x, cy = base.y - 0.75 * u;
-    const glow = pen.createRadialGradient(cx, cy, 0, cx, cy, u * (0.6 + 1.6 * burst));
-    glow.addColorStop(0, 'rgba(255,120,40,' + (0.6 + 0.4 * burst) + ')');
-    glow.addColorStop(1, 'rgba(255,60,20,0)');
-    pen.fillStyle = glow;
-    pen.beginPath(); pen.arc(cx, cy, u * (0.6 + 1.6 * burst), 0, 6.2832); pen.fill();
-    if (calm) return;
-    // Smoke: puffs that rise, grow and fade.
-    for (let i = 0; i < 5; i++) {
-      const k = (t * 0.25 + i / 5) % 1;
-      pen.fillStyle = 'rgba(150,150,150,' + (0.35 * (1 - k)) + ')';
-      pen.beginPath(); pen.arc(cx + Math.sin(k * 4 + i) * u * 0.4, cy - k * u * 2.6, u * (0.18 + 0.4 * k), 0, 6.2832); pen.fill();
-    }
-    // Lava: bright drops thrown up and out, falling back down the cone.
-    if (burst > 0) {
-      for (let i = 0; i < 16; i++) {
-        const k = (t * 0.9 + i / 16) % 1, a = (hash('lava' + i) - 0.5) * 2.2;
-        const x = cx + Math.sin(a) * k * u * 1.6, y = cy - (k * 2.4 - k * k * 3.2) * u;
-        pen.fillStyle = 'rgba(255,' + Math.round(90 + 120 * (1 - k)) + ',30,' + burst + ')';
-        pen.beginPath(); pen.arc(x, y, Math.max(0.8, u * 0.09), 0, 6.2832); pen.fill();
+    const files = owner.get('hub:files');
+    let nearest, nd = Infinity;
+    if (files) for (const v of volcanoes) { const d = tdist([v.q, v.r], [files.q, files.r]); if (d < nd) { nd = d; nearest = v; } }
+    const write = Math.max(0, 1 - (Date.now() - lastWrite) / 4000);
+    pen.textAlign = 'center';
+    for (const v of volcanoes) {
+      const st = v.state || { stage: 'dormant', size: 0.7 };
+      const c = centerOf(v.k), base = screen(c.x, c.y, 0), u = TILE * base.f * st.size;
+      const hot = st.stage === 'erupting' ? 1 : st.stage === 'growing' ? 0.4 : st.stage === 'cooling' ? 0.2 : 0;
+      const burst = Math.max(v === nearest ? write : 0, st.stage === 'erupting' ? 0.7 : 0);
+      pen.fillStyle = 'rgba(64,52,48,0.98)';
+      pen.beginPath(); pen.moveTo(base.x - 0.75 * u, base.y + 0.4 * u); pen.lineTo(base.x - 0.18 * u, base.y - 0.75 * u); pen.lineTo(base.x + 0.18 * u, base.y - 0.75 * u); pen.lineTo(base.x + 0.75 * u, base.y + 0.4 * u); pen.closePath(); pen.fill();
+      const cx = base.x, cy = base.y - 0.75 * u, gr = u * (0.5 + 1.2 * Math.max(burst, hot));
+      const glow = pen.createRadialGradient(cx, cy, 0, cx, cy, gr);
+      glow.addColorStop(0, 'rgba(255,120,40,' + (0.3 + 0.7 * Math.max(burst, hot)) + ')');
+      glow.addColorStop(1, 'rgba(255,60,20,0)');
+      pen.fillStyle = glow;
+      pen.beginPath(); pen.arc(cx, cy, gr, 0, 6.2832); pen.fill();
+      if (!calm) {
+        // Smoke: puffs that rise, grow and fade; more when the volcano is awake.
+        const puffs = 2 + Math.round(5 * hot);
+        for (let i = 0; i < puffs; i++) {
+          const k = (t * 0.25 + i / puffs + v.off) % 1;
+          pen.fillStyle = 'rgba(150,150,150,' + ((0.2 + 0.25 * hot) * (1 - k)) + ')';
+          pen.beginPath(); pen.arc(cx + Math.sin(k * 4 + i) * u * 0.4, cy - k * u * (1.6 + 2 * hot), u * (0.15 + (0.3 + 0.3 * hot) * k), 0, 6.2832); pen.fill();
+        }
+        // Trembling rings while it grows or erupts.
+        if (st.stage === 'growing' || st.stage === 'erupting') {
+          const k = (t * 0.8 + v.off) % 1;
+          pen.strokeStyle = 'rgba(201,160,106,' + (0.5 * (1 - k)) + ')';
+          pen.lineWidth = 1;
+          pen.beginPath(); pen.ellipse(base.x, base.y + 0.2 * u, u * (0.8 + 2 * k), u * (0.4 + 1 * k), 0, 0, 6.2832); pen.stroke();
+        }
+        // Lava: bright drops thrown up and out, falling back down the cone.
+        if (burst > 0) {
+          for (let i = 0; i < 16; i++) {
+            const k = (t * 0.9 + i / 16) % 1, a = (hash('lava' + i) - 0.5) * 2.2;
+            const x = cx + Math.sin(a) * k * u * 1.6, y = cy - (k * 2.4 - k * k * 3.2) * u;
+            pen.fillStyle = 'rgba(255,' + Math.round(90 + 120 * (1 - k)) + ',30,' + burst + ')';
+            pen.beginPath(); pen.arc(x, y, Math.max(0.8, u * 0.09), 0, 6.2832); pen.fill();
+          }
+        }
       }
+      if (base.f > 0.45) {
+        pen.font = '10px ui-sans-serif, system-ui, sans-serif';
+        const text = v.name + (st.stage === 'dormant' ? '' : ' \u00b7 ' + st.stage + (st.woken ? ' (woken by M' + st.woken.M + ')' : ''));
+        pen.lineWidth = 3; pen.strokeStyle = 'rgba(20,22,27,0.75)';
+        pen.strokeText(text, base.x, base.y + 0.4 * u + 11);
+        pen.fillStyle = st.stage === 'dormant' ? 'rgba(220,210,200,0.75)' : 'rgba(255,170,110,0.95)';
+        pen.fillText(text, base.x, base.y + 0.4 * u + 11);
+      }
+    }
+  }
+
+  // Earthquakes as they happen (QUAKE_LIVE): rings that spread from the
+  // epicenter, its new crevasse shaking, and the magnitude and fault.
+  function drawQuakes(t) {
+    const now = worldNow();
+    pen.textAlign = 'center';
+    for (const q of liveQuakes) {
+      const age = (now - q.at) / QUAKE_LIVE, fade = Math.min(1, (1 - age) * 3);
+      const c = centerOf(q.key), s = screen(c.x, c.y, 0), u = TILE * s.f, size = 1 + (q.M - 5);
+      pen.strokeStyle = 'rgba(201,160,106,' + (0.7 * fade) + ')';
+      pen.lineWidth = 1.5;
+      for (let i = 0; i < 3; i++) {
+        const k = calm ? i / 3 : (t * 0.7 + i / 3) % 1;
+        pen.beginPath(); pen.ellipse(s.x, s.y, u * size * k * 1.2, u * size * k * 0.75, 0, 0, 6.2832); pen.stroke();
+      }
+      for (const k of effectsOf(q).rift) {
+        const p = screen(centerOf(k).x, centerOf(k).y, 0), w = TILE * p.f, jx = calm ? 0 : Math.sin(t * 40 + hash(k) * 9) * w * 0.06;
+        pen.strokeStyle = 'rgba(30,20,12,' + (0.9 * fade) + ')';
+        pen.lineWidth = Math.max(1, w * 0.1);
+        pen.beginPath(); pen.moveTo(p.x - w * 0.45 + jx, p.y - w * 0.1); pen.lineTo(p.x - w * 0.15 + jx, p.y + w * 0.1); pen.lineTo(p.x + w * 0.1 + jx, p.y - w * 0.12); pen.lineTo(p.x + w * 0.45 + jx, p.y + w * 0.08); pen.stroke();
+      }
+      pen.font = '700 11px ui-sans-serif, system-ui, sans-serif';
+      const text = 'M' + q.M.toFixed(1) + ' earthquake \u00b7 ' + q.fault;
+      const y = s.y - u * 1.6;
+      pen.lineWidth = 3; pen.strokeStyle = 'rgba(20,22,27,' + (0.85 * fade) + ')';
+      pen.strokeText(text, s.x, y);
+      pen.fillStyle = 'rgba(232,196,140,' + fade + ')';
+      pen.fillText(text, s.x, y);
     }
   }
 
@@ -873,12 +1186,13 @@ export const CARAVAN: Theme = {
   // equator and 30 degrees, the westerlies blow east from 30 to 60 degrees,
   // and the polar easterlies blow west above 60. The belts move up to 8
   // degrees north in the northern summer and south in its winter.
-  const beltShift = () => 8 * Math.sin(2 * Math.PI * (calendar().frac - 0.125));
+  const shiftOf = frac => 8 * Math.sin(2 * Math.PI * (frac - 0.125));
+  const beltShift = () => shiftOf(calendar().frac);
   function windAt(lat) {
     const a = Math.abs(lat - beltShift());
     return a < 30 ? -1 : a < 60 ? 1.3 : -0.7;
   }
-  const latToY = lat => TILE * 1.5 * ((80 - lat) / 140 * ROWS - 0.5) - OY;
+  const latToY = lat => TILE * 1.5 * ((80 - lat) / DEG - 0.5) - OY;
 
   // Clouds ride the wind of their latitude, and their band moves with the
   // belts. They are larger where the season brings rain: mid-latitude
@@ -1008,7 +1322,7 @@ export const CARAVAN: Theme = {
       for (const k of d.tiles || []) {
         const c = centerOf(k), s = screen(c.x, c.y, 0), u = TILE * s.f, sd = hash(d.id + k), wob = calm ? 0 : 1;
         fillPath(tilePath(c, 0.97));
-        pen.fillStyle = rgba(d.kind === 'wildfire' ? '#7a1e0e' : hz.color, (d.kind === 'quake' ? 0.15 : 0.32) * fade * s.fog);
+        pen.fillStyle = rgba(d.kind === 'wildfire' ? '#7a1e0e' : hz.color, (d.kind === 'drought' ? 0.22 : 0.32) * fade * s.fog);
         pen.fill();
         if (d.kind === 'flood') {
           pen.strokeStyle = rgba('#d6ecf8', 0.6 * fade);
@@ -1030,15 +1344,24 @@ export const CARAVAN: Theme = {
             const ph = (t * 0.5 * wob + hash(k + i)) % 1;
             pen.beginPath(); pen.arc(s.x + (hash(k + i + 'x') - 0.5) * u * 1.2 + ph * u * 0.4, s.y - u * 0.5 + ph * u, Math.max(0.7, u * 0.05), 0, 6.2832); pen.fill();
           }
-        } else if (d.kind === 'quake') {
-          const jx = calm ? 0 : Math.sin(t * 40 + sd * 9) * u * 0.04;
-          pen.strokeStyle = rgba('#2a1d12', 0.85 * fade);
-          pen.lineWidth = Math.max(0.8, u * 0.07);
-          pen.beginPath(); pen.moveTo(s.x - u * 0.45 + jx, s.y - u * 0.1);
-          pen.lineTo(s.x - u * 0.15 + jx, s.y + u * 0.08); pen.lineTo(s.x + u * 0.05 + jx, s.y - u * 0.12); pen.lineTo(s.x + u * 0.4 + jx, s.y + u * 0.1); pen.stroke();
+        } else if (d.kind === 'drought') {
+          // Dry, cracked ground.
+          pen.strokeStyle = rgba('#7a5a28', 0.8 * fade);
+          pen.lineWidth = Math.max(0.6, u * 0.05);
+          pen.beginPath(); pen.moveTo(s.x - u * 0.4, s.y); pen.lineTo(s.x - u * 0.1, s.y + u * 0.12); pen.lineTo(s.x + u * 0.15, s.y - u * 0.05);
+          pen.moveTo(s.x - u * 0.1, s.y + u * 0.12); pen.lineTo(s.x - u * 0.05, s.y + u * 0.35); pen.stroke();
         }
       }
       const c = tileCenter(d.q, d.r), s = screen(c.x, c.y, 0), u = TILE * s.f;
+      if (d.kind === 'tornado') {
+        // A funnel of turning rings, narrow at the ground.
+        for (let i = 0; i < 7; i++) {
+          const f = i / 6, w = u * (0.15 + 0.75 * f), y = s.y - u * 1.8 * f, a = calm ? 0 : t * 6 + i;
+          pen.strokeStyle = rgba('#c8ced6', (0.4 + 0.4 * f) * fade);
+          pen.lineWidth = Math.max(1, u * 0.08);
+          pen.beginPath(); pen.ellipse(s.x + Math.sin(a) * u * 0.08 * (1 - f), y, w, w * 0.3, 0, 0, 6.2832); pen.stroke();
+        }
+      }
       if (d.kind === 'storm') {
         // Spiral arms that turn around the eye.
         pen.strokeStyle = rgba('#eef2f6', 0.7 * fade);
@@ -1094,13 +1417,19 @@ export const CARAVAN: Theme = {
         pen.fillText('No disaster now \u00b7 next: ' + HAZARD[next.kind].name + ' in ' + Math.floor(wait / 60) + ':' + String(wait % 60).padStart(2, '0'), x - R - 8, y + 30);
       }
     }
-    active.forEach((d, i) => {
-      const hz = HAZARD[d.kind], left = Math.max(0, Math.round((d.end - now) / 1000));
-      const yy = y + 30 + i * 15;
-      pen.fillStyle = hz.color;
+    const lines = [
+      ...active.map(d => { const hz = HAZARD[d.kind]; return [hz.color, hz.name + ' \u00d7' + hz.mult + ' cost', d.end]; }),
+      ...liveQuakes.map(q => ['#c9a06a', 'M' + q.M.toFixed(1) + ' earthquake \u00b7 ' + q.fault, q.at + QUAKE_LIVE]),
+      ...volcanoes.filter(v => v.state && v.state.stage !== 'dormant' && v.state.stage !== 'cooling')
+        .map(v => ['#ff7a3a', v.name + ' ' + v.state.stage, 0]),
+    ];
+    lines.forEach(([color, label, end], i) => {
+      const left = Math.max(0, Math.round((end - now) / 1000));
+      const yy = y + 30 + (active.length ? 0 : 15) + i * 15;
+      pen.fillStyle = color;
       pen.beginPath(); pen.arc(x - R - 12 - 4, yy, 3.5, 0, 6.2832); pen.fill();
       pen.fillStyle = 'rgba(225,228,234,0.9)';
-      pen.fillText(hz.name + ' \u00d7' + hz.mult + ' cost \u00b7 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'), x - R - 26, yy);
+      pen.fillText(label + (end ? ' \u00b7 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') : ''), x - R - 26, yy);
     });
     pen.textBaseline = 'alphabetic';
   }
@@ -1255,7 +1584,7 @@ export const CARAVAN: Theme = {
   }
   function mapKey(fc) {
     const q = p => Math.round(p.x * 4) + ':' + Math.round(p.y * 4);
-    return [q(screenRaw(-OX, -OY, 0)), q(screenRaw(OX, -OY, 0)), q(screenRaw(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n].join(' ');
+    return [q(screenRaw(-OX, -OY, 0)), q(screenRaw(OX, -OY, 0)), q(screenRaw(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n, terraGen].join(' ');
   }
 
   function draw(now) {
@@ -1284,6 +1613,7 @@ export const CARAVAN: Theme = {
 
     drawChanges(now, t);
     drawDisasters(t);
+    drawQuakes(t);
     drawVolcano(t);
 
     // Cities and houses, far ones first.
