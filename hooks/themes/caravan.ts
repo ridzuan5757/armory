@@ -28,9 +28,28 @@ export const CARAVAN: Theme = {
   const OX = TILE * Math.sqrt(3) * (COLS - 0.5) / 2, OY = TILE * 1.5 * (ROWS - 1) / 2;
   const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
   const tileCenter = (q, r) => ({ x: TILE * Math.sqrt(3) * (q + r / 2) - OX, y: TILE * 1.5 * r - OY, z: 0 });
-  const tkey = (q, r) => q + ',' + r;
-  const tdist = (a, b) => (Math.abs(a[0] - b[0]) + Math.abs(a[0] + a[1] - b[0] - b[1]) + Math.abs(a[1] - b[1])) / 2;
+  // The map is a cylinder, as the Earth is round: east of the last column
+  // is the first one again. tkey gives each tile one key (its column taken
+  // modulo COLS), so every neighbor lookup wraps; tdist takes the shorter
+  // way around. WW is the width of the map; nearX gives the copy of an x
+  // nearest the middle of the view, so the map shows no edge.
+  const tkey = (q, r) => {
+    const off = (r - (r & 1)) / 2, col = (((q + off) % COLS) + COLS) % COLS;
+    return (col - off) + ',' + r;
+  };
+  const tdist = (a, b) => {
+    let best = Infinity;
+    for (const sh of [-COLS, 0, COLS]) {
+      const bq = b[0] + sh;
+      best = Math.min(best, (Math.abs(a[0] - bq) + Math.abs(a[0] + a[1] - bq - b[1]) + Math.abs(a[1] - b[1])) / 2);
+    }
+    return best;
+  };
+  const WW = TILE * Math.sqrt(3) * COLS;
+  const wrapDelta = dx => dx - WW * Math.round(dx / WW);
+  const nearX = x => { const cx = cam.x + view.px; return cx + wrapDelta(x - cx); };
   const unkey = k => k.split(',').map(Number);
+  const canon = cell => unkey(tkey(...cell));
   function ringAround(q, r, k) {
     const out = [];
     let cq = q + DIRS[4][0] * k, cr = r + DIRS[4][1] * k;
@@ -469,6 +488,7 @@ export const CARAVAN: Theme = {
           if (best) break;
         }
         if (!best) continue;
+        best = canon(best);
         held.set(tkey(...best), col.city);
         owner.set(id, { q: best[0], r: best[1], city: col.city });
       }
@@ -552,14 +572,14 @@ export const CARAVAN: Theme = {
           if (s < bs) { bs = s; best = cell; }
         }
       }
-      if (best) return best;
+      if (best) return canon(best);
     }
     return undefined;
   }
 
   // The camera shows the whole Earth when nothing has the focus.
   function fitBounds() {
-    return { x: 0, y: 0, z: 0, r: OX, w: 2 * OX + 2 * TILE, h: (2 * OY + 2 * TILE) * Math.max(0.4, Math.cos(view.pitch)) };
+    return { x: 0, y: 0, z: 0, r: OX, w: 2 * OX + 2 * TILE, h: (2 * OY + 2 * TILE) * Math.max(0.4, Math.cos(view.pitch)), wrap: WW };
   }
 
   // Changes, as a strategy game shows them: each tile that a colony gains,
@@ -745,7 +765,7 @@ export const CARAVAN: Theme = {
         }
         const a = centerOf(h.path[h.pi]), b = centerOf(h.path[Math.min(h.pi + 1, h.path.length - 1)]);
         const u = h.pi < h.path.length - 1 ? h.u : 0;
-        px = a.x + (b.x - a.x) * u; py = a.y + (b.y - a.y) * u;
+        px = a.x + wrapDelta(b.x - a.x) * u; py = a.y + (b.y - a.y) * u;
       } else {
         const end = centerOf(h.path[h.path.length - 1] || goal);
         px = end.x; py = end.y;
@@ -753,9 +773,9 @@ export const CARAVAN: Theme = {
         if (mode === 'swarm') { const s = swarmSlot(slot++, target, t); px = s.x; py = s.y; }
       }
       const k = mode === 'swarm' && h.pi >= h.path.length - 1 ? 0.12 : 1;
-      const nx = h.x + (px - h.x) * k, ny = h.y + (py - h.y) * k;
-      h.vx = (nx - h.x) / Math.max(dt, 0.001); h.vy = (ny - h.y) / Math.max(dt, 0.001);
-      h.x = nx; h.y = ny;
+      const mx = wrapDelta(px - h.x) * k, ny = h.y + (py - h.y) * k;
+      h.vx = mx / Math.max(dt, 0.001); h.vy = (ny - h.y) / Math.max(dt, 0.001);
+      h.x = wrapDelta(h.x + mx); h.y = ny;
       const here = tiles.get(tileAt(h.x, h.y));
       h.boat = !!here && !!WET[here.terrain];
       h.carry = mode === 'trip' ? 'envelope' : 'crate';
@@ -767,10 +787,10 @@ export const CARAVAN: Theme = {
 
   // The outline of a tile on screen.
   function tilePath(c, scale) {
-    const pts = [];
+    const pts = [], cx = nearX(c.x);
     for (let i = 0; i < 6; i++) {
       const a = Math.PI / 6 + i * Math.PI / 3;
-      pts.push(screen(c.x + Math.cos(a) * TILE * scale, c.y + Math.sin(a) * TILE * scale, 0));
+      pts.push(screenRaw(cx + Math.cos(a) * TILE * scale, c.y + Math.sin(a) * TILE * scale, 0));
     }
     return pts;
   }
@@ -878,14 +898,14 @@ export const CARAVAN: Theme = {
         const x = ((hash('sx' + i) * 2 - 1) * w + v * t * 10 + 8 * w) % (2 * w) - w, y = latToY(lat);
         const k = tiles.get(tileAt(x, y));
         if (!k || !WET[k.terrain]) continue;
-        const a = screen(x, y, 0), b = screen(x + v * TILE * 1.6, y, 0);
+        const sx = nearX(x), a = screenRaw(sx, y, 0), b = screenRaw(sx + v * TILE * 1.6, y, 0);
         pen.strokeStyle = 'rgba(214,236,248,0.22)';
         pen.beginPath(); pen.moveTo(a.x, a.y); pen.lineTo(b.x, b.y); pen.stroke();
       }
     }
     clouds.forEach((c, i) => {
       const lat = c.lat + shift, v = windAt(lat);
-      c.x = ((c.x + v * (5 + 3 * hash('cv' + i)) * dt) + 3 * w) % (2 * w) - w;
+      c.x = wrapDelta(c.x + v * (5 + 3 * hash('cv' + i)) * dt);
       const local = seasonAt(lat, cal.season), a = Math.abs(lat);
       const wet = (local === 3 && a > 30 && a < 62) || (local === 1 && a < 25);
       const r = TILE * c.r * (wet ? 1.45 : 0.85);
@@ -1108,14 +1128,15 @@ export const CARAVAN: Theme = {
       for (let j = 0; j < river.length; j++) {
         const tl = tiles.get(river[j]);
         if (!tl || WET[tl.terrain]) continue;
-        const c = centerOf(river[j]), mid = k => { const o = centerOf(k); return { x: (c.x + o.x) / 2, y: (c.y + o.y) / 2 }; };
+        const raw = centerOf(river[j]), c = { x: nearX(raw.x), y: raw.y };
+        const mid = k => { const o = centerOf(k); return { x: c.x + wrapDelta(o.x - c.x) / 2, y: (c.y + o.y) / 2 }; };
         const from = j > 0 ? mid(river[j - 1]) : c;
         const to = j < river.length - 1 ? mid(river[j + 1]) : c;
         // The channel bends to one side of the middle, so the river meanders.
         const bend = (hash('bend' + river[j]) - 0.5) * TILE * 0.7;
         const dx = to.x - from.x, dy = to.y - from.y, dl = Math.hypot(dx, dy) || 1;
-        const a = screen(from.x, from.y, 0), b = screen(to.x, to.y, 0);
-        const m = screen(c.x - dy / dl * bend, c.y + dx / dl * bend, 0);
+        const a = screenRaw(from.x, from.y, 0), b = screenRaw(to.x, to.y, 0);
+        const m = screenRaw(c.x - dy / dl * bend, c.y + dx / dl * bend, 0);
         const w = TILE * 0.46 * m.f;
         const city = tl.city && nodes.get(tl.city);
         const dim = city ? (inFocus(city) ? 1 : 0.5) : 0.8;
@@ -1137,7 +1158,7 @@ export const CARAVAN: Theme = {
         stroke(w * 1.55, rgba('#8c7a50', 0.9 * dim * m.fog));
         stroke(w, rgba('#4f9fd0', 0.97 * dim * m.fog));
         if (j === 0) {
-          const sp = screen(c.x, c.y, 0);
+          const sp = screenRaw(c.x, c.y, 0);
           pen.fillStyle = rgba('#8c7a50', 0.9 * dim * m.fog);
           pen.beginPath(); pen.arc(sp.x, sp.y, w * 1.1, 0, 6.2832); pen.fill();
           pen.fillStyle = rgba('#4f9fd0', 0.97 * dim * m.fog);
@@ -1210,8 +1231,8 @@ export const CARAVAN: Theme = {
     // Roads: a dirt band with ruts on land; a dashed ferry line over water.
     for (const road of roads) {
       for (let j = 1; j < road.length; j++) {
-        const a = centerOf(road[j - 1]), b = centerOf(road[j]);
-        const pa = screen(a.x, a.y, 0), pb = screen(b.x, b.y, 0);
+        const a = centerOf(road[j - 1]), b = centerOf(road[j]), ax = nearX(a.x);
+        const pa = screenRaw(ax, a.y, 0), pb = screenRaw(ax + wrapDelta(b.x - a.x), b.y, 0);
         const wet = WET[tiles.get(road[j - 1]).terrain] || WET[tiles.get(road[j]).terrain];
         pen.setLineDash(wet ? [3, 4] : []);
         pen.strokeStyle = wet ? 'rgba(220,230,240,0.55)' : 'rgba(160,125,80,0.8)';
@@ -1234,7 +1255,7 @@ export const CARAVAN: Theme = {
   }
   function mapKey(fc) {
     const q = p => Math.round(p.x * 4) + ':' + Math.round(p.y * 4);
-    return [q(screen(-OX, -OY, 0)), q(screen(OX, -OY, 0)), q(screen(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n].join(' ');
+    return [q(screenRaw(-OX, -OY, 0)), q(screenRaw(OX, -OY, 0)), q(screenRaw(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n].join(' ');
   }
 
   function draw(now) {
@@ -1244,7 +1265,7 @@ export const CARAVAN: Theme = {
     pen.globalCompositeOperation = 'source-over';
     pen.fillStyle = '#292c33';
     pen.fillRect(0, 0, W, H);
-    for (const n of nodes.values()) project(n);
+    for (const n of nodes.values()) { const x = n.x; n.x = nearX(x); project(n); n.x = x; }
     const ft = focus && nodes.get(focus.id);
     const fc = ft && (ft.kind === 'hub' ? ft.id : ft.colony);
     const inFocus = n => !fc || n.id === fc || n.colony === fc;
@@ -1307,15 +1328,17 @@ export const CARAVAN: Theme = {
       }
     }
 
-    // Memory links and job–session links: dashed lines between tiles.
+    // Memory links, job–session links and git–file links: lines between
+    // tiles, the short way around the map.
     for (const e of edges.values()) {
       if (!e.link || e.dying) continue;
       const a = nodes.get(e.a), b = nodes.get(e.b);
       if (!a || !b) continue;
+      const end = screenRaw(nearX(a.x) + wrapDelta(b.x - a.x), b.y, b.z);
       pen.setLineDash(e.solid ? [] : [2, 4]);
       pen.lineWidth = 1;
       pen.strokeStyle = rgba(e.color || '#cfe0ff', (e.solid ? 0.5 : 0.22) * (inFocus(a) ? 1 : 0.3) * (a.fog + b.fog) / 2);
-      pen.beginPath(); pen.moveTo(a.sx, a.sy); pen.lineTo(b.sx, b.sy); pen.stroke();
+      pen.beginPath(); pen.moveTo(a.sx, a.sy); pen.lineTo(end.x, end.y); pen.stroke();
     }
     pen.setLineDash([]);
 
@@ -1325,7 +1348,8 @@ export const CARAVAN: Theme = {
     pen.strokeStyle = 'rgba(242,230,200,0.4)';
     for (const h of horses.values()) {
       if (h.pi >= h.path.length - 1) continue;
-      const pts = [screen(h.x, h.y, 0), ...h.path.slice(h.pi + 1).map(k => { const c = centerOf(k); return screen(c.x, c.y, 0); })];
+      let x = nearX(h.x);
+      const pts = [screenRaw(x, h.y, 0), ...h.path.slice(h.pi + 1).map(k => { const c = centerOf(k); x += wrapDelta(c.x - x); return screenRaw(x, c.y, 0); })];
       pen.beginPath(); pts.forEach((p, j) => (j ? pen.lineTo(p.x, p.y) : pen.moveTo(p.x, p.y))); pen.stroke();
     }
     pen.setLineDash([]);
