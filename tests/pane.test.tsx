@@ -227,7 +227,7 @@ test('/armory theme saves the theme and rewrites the page for it', async ($, on)
 
   expect(await run('web')).toMatch(/terminal-browser/)
   expect(writes.get('index.html')).toContain("const THEME = 'mold'")
-  expect(await run('theme')).toMatch(/Theme: mold\. Themes: mold, orbit, hive/)
+  expect(await run('theme')).toMatch(/Theme: mold\. Themes: mold, orbit, hive, race, caravan/)
   expect(await run('theme saturn')).toMatch(/No theme named saturn/)
 
   expect(await run('theme orbit')).toBe('Armory theme: orbit.')

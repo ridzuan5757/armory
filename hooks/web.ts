@@ -1,8 +1,10 @@
 import type { Snapshot } from '../types'
 
+import { CARAVAN } from './themes/caravan'
 import { HIVE } from './themes/hive'
 import { MOLD } from './themes/mold'
 import { ORBIT } from './themes/orbit'
+import { RACE } from './themes/race'
 
 // The page loads data.js again every pollMs with a script tag, so it works
 // from file:// with no server. data.js calls window.armoryData(payload).
@@ -15,7 +17,7 @@ import { ORBIT } from './themes/orbit'
 //   AUTO_TURN  the view turns slowly at rest
 export type Theme = { name: string; legend: string; script: string }
 
-export const THEMES: Record<string, Theme> = { mold: MOLD, orbit: ORBIT, hive: HIVE }
+export const THEMES: Record<string, Theme> = { mold: MOLD, orbit: ORBIT, hive: HIVE, race: RACE, caravan: CARAVAN }
 export const DEFAULT_THEME = 'mold'
 
 // A fingerprint of a theme's page code. Each data update carries the one of
