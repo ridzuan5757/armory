@@ -9,11 +9,11 @@ export const ORBIT: Theme = {
   script: `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = true;
 
-  // Hubs are stars on a square in the z = 0 plane, spaced so that their
+  // Hubs are stars on a pentagon in the z = 0 plane, spaced so that their
   // systems never touch.
-  const ANGLE = { 'hub:skills': -90, 'hub:files': 0, 'hub:jobs': 90, 'hub:memory': 180 };
+  const ANGLE = { 'hub:skills': -90, 'hub:files': -18, 'hub:jobs': 54, 'hub:memory': 126, 'hub:sessions': 198 };
   let spread = 280;
-  // During idle the square of stars turns slowly about its center (spin).
+  // During idle the pentagon of stars turns slowly about its center (spin).
   let spin = 0;
   function anchor(id) {
     const a = ANGLE[id] * Math.PI / 180 + spin;
@@ -74,7 +74,8 @@ export const ORBIT: Theme = {
     const starScale = n => Math.min(2, Math.max(0.3, 150 / extent(n)));
     let widest = 0;
     for (const n of nodes.values()) if (n.kind === 'hub') widest = Math.max(widest, extent(n) * starScale(n));
-    spread = Math.max(120, (2 * widest + 60) / Math.SQRT2);
+    // Neighbors on the pentagon are 2·sin(36°) = 1.176 spreads apart.
+    spread = Math.max(120, (2 * widest + 60) / 1.176);
     // A body whose ring changed eases to its new orbit from where it is.
     for (const [id, o] of next) {
       const old = orbits.get(id);
@@ -124,7 +125,7 @@ export const ORBIT: Theme = {
   //   siblings  SIBLING of it: bodies of one parent pull on each other, so
   //             orbits turn elliptical, precess and nudge their neighbors
   //   stars     pull on each other and turn about their common center; a
-  //             spring to their place on the square keeps them from drifting
+  //             spring to their place on the pentagon keeps them from drifting
   // A body's state is relative to its parent, so a moon keeps its planet.
   // The integrator is leapfrog, which keeps orbits stable for a long time.
   // At the next input, every body eases back to its rail.
@@ -206,7 +207,7 @@ export const ORBIT: Theme = {
   }
 
   // The stars: gravity between them, a spring to their turning place on the
-  // square, and a little drag so the dance does not grow.
+  // pentagon, and a little drag so the dance does not grow.
   const STAR_GM = 600000, STAR_K = 0.6, STAR_DRAG = 0.4;
   function stepStars(dt) {
     const stars = [...nodes.values()].filter(n => n.kind === 'hub');

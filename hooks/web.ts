@@ -82,6 +82,7 @@ const HEAD = `<!doctype html>
   <span><i style="background:#f5b94a"></i>jobs</span>
   <span><i style="background:#7aa2ff"></i>memory</span>
   <span><i style="background:#e8ecd8"></i>files</span>
+  <span><i style="background:#e0a3ff"></i>sessions</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -90,7 +91,8 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8' };
+  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff' };
+  const SESSION = { busy: '#ffcc66', idle: '#7fd8a6', shell: '#7fb2ff' };
   const OP = { read: '#7fd8ff', write: '#ff9a4d', new: '#5fd38d' };
   const GLOW_MS = 30000;
   const MASS = { hub: 4, group: 2, joint: 1.5, leaf: 1 };
@@ -127,7 +129,7 @@ const SHARED_A = `
   let alpha = 1, gen = 0, firstLoad = true;
   // Focus: after an event, the camera goes to the colony where it happened.
   let focus, fresh = [], lastFileAt = 0;
-  const jobStates = new Map();
+  const jobStates = new Map(), sessionStates = new Map();
   const FOCUS_MS = 6000, HANDS_OFF_MS = 8000;
   const cam = { x: 0, y: 0, z: 0, s: 1, r: 300 };
 
@@ -258,6 +260,22 @@ const SHARED_A = `
       if (jobStates.get(j.id) !== j.state && !target) { target = 'job:' + j.id; why = 'jobs · ' + j.name + ' ' + j.state; }
       jobStates.set(j.id, j.state);
     }
+    // Another session started, ended or changed status. This session's own
+    // busy/idle flips each turn, so only its start counts.
+    const seen = new Set();
+    for (const x of s.sessions || []) {
+      seen.add(x.pid);
+      const was = sessionStates.get(x.pid);
+      if (was !== x.status && !target && (was === undefined || !x.self)) {
+        target = 'session:' + x.pid; why = 'sessions · ' + x.name + ' ' + x.status;
+      }
+      sessionStates.set(x.pid, x.status);
+    }
+    for (const pid of [...sessionStates.keys()]) {
+      if (seen.has(pid)) continue;
+      sessionStates.delete(pid);
+      if (!target) { target = 'hub:sessions'; why = 'sessions · one ended'; }
+    }
     const newest = (s.files || []).reduce((best, f) => f.at > (best ? best.at : 0) ? f : best, undefined);
     if (newest && newest.at > lastFileAt) {
       lastFileAt = newest.at;
@@ -295,6 +313,17 @@ const SHARED_A = `
     edge('hub:skills', 'hub:files', { w: 2, rest: 400, k: 0 }, 0);
     edge('hub:memory', 'hub:files', { w: 2, rest: 400, k: 0 }, 0);
     edge('hub:jobs', 'hub:files', { w: 2, rest: 400, k: 0 }, 0);
+    const sessions = s.sessions || [];
+    const busy = sessions.filter(x => x.status === 'busy').length;
+    node('hub:sessions', { kind: 'hub', label: 'SESSIONS ' + busy + '/' + sessions.length, color: HUB.sessions, r: 9 }, '', 0);
+    edge('hub:sessions', 'hub:jobs', { w: 2, rest: 400, k: 0 }, 0);
+    edge('hub:sessions', 'hub:memory', { w: 2, rest: 400, k: 0 }, 0);
+    // One node per running session; a busy one pulses.
+    branch('hub:sessions', HUB.sessions, sessions.map(x => ({
+      id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
+      props: { type: 'session', data: x, label: x.name + (x.self ? ' (this)' : ''), color: SESSION[x.status] || '#8b927c',
+        r: x.self ? 6 : 4.5, live: x.status === 'busy', showLabel: true },
+    })), 150, step);
 
     s.skills.forEach(k => {
       const f = Math.sqrt(k.uses / maxUse);
@@ -345,6 +374,7 @@ const SHARED_A = `
     else {
       lastFileAt = Math.max(0, ...(s.files || []).map(f => f.at));
       for (const j of s.jobs) jobStates.set(j.id, j.state);
+      for (const x of s.sessions || []) sessionStates.set(x.pid, x.status);
     }
     firstLoad = false;
   }
@@ -430,6 +460,12 @@ const SHARED_B = `
       const age = d.at ? Math.round((Date.now() - d.at) / 1000) : 0;
       return '<div class="k">' + (d.kind === 'dir' ? 'folder' : 'file') + (d.op ? ' · ' + esc(d.op) : '') + '</div><div class="n">' +
         esc(d.key) + '</div>' + (d.at ? '<div class="d">' + (d.kind === 'dir' ? 'last use below it ' : 'used ') + age + ' s ago</div>' : '');
+    }
+    if (n.type === 'session') {
+      const age = d.since ? Math.round((Date.now() - d.since) / 1000) : 0;
+      const ago = age < 120 ? age + ' s' : age < 7200 ? Math.round(age / 60) + ' min' : age < 172800 ? Math.round(age / 3600) + ' h' : Math.round(age / 86400) + ' d';
+      return '<div class="k">session · ' + esc(d.status) + (d.self ? ' · this one' : '') + '</div><div class="n">' + esc(d.name) +
+        '</div><div class="d">' + esc(d.cwd) + '<br>' + esc(d.status) + ' for ' + ago + ' · pid ' + d.pid + '</div>';
     }
     if (n.type === 'job') return '<div class="k">job · ' + esc(d.state) + '</div><div class="n">' + esc(d.name) +
       '</div>' + (d.detail ? '<div class="d">' + esc(d.detail) + '</div>' : '');
@@ -533,7 +569,7 @@ const SHARED_B = `
     document.getElementById('stats').innerHTML =
       '<b>' + s.skills.length + '</b> skills · <b>' + active + '/' + s.jobs.length + '</b> jobs · <b>' +
       s.memory.length + '</b> memories · <b>' + links + '</b> links · <b>' +
-      (s.files || []).filter(f => f.at > 0).length + '</b> files';
+      (s.files || []).filter(f => f.at > 0).length + '</b> files · <b>' + (s.sessions || []).length + '</b> sessions';
     document.getElementById('errors').textContent = s.errors.join(' · ');
     build(s);
     lastData = performance.now();

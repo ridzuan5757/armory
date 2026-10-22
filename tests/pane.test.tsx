@@ -260,3 +260,40 @@ test('skill use counts come from grep | uniq, so history.jsonl may pass 4 MiB', 
   expect(text).not.toMatch(/history\.jsonl/)
   await ui.unmount()
 })
+
+test('the sessions colony lists live sessions only, with safe fields', async ($, on) => {
+  const pages: string[] = []
+  const session = (pid: number, status: string) =>
+    JSON.stringify({ pid, sessionId: `s-${pid}`, cwd: `${HOME}/work/${pid}`, name: `work-${pid}`, status, statusUpdatedAt: 1000, messagingSocketPath: '/tmp/x.sock' })
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('fs.list', (_, e) => ({
+    value: e.path === `${HOME}/.claude/sessions`
+      ? ['4242.json', '5000.json', '6000.json', '4242.secret.key'].map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false }))
+      : [],
+  }))
+  on('fs.read', (_, e) => {
+    if (e.path.endsWith('/4242.json')) return { value: session(4242, 'busy') }
+    if (e.path.endsWith('/5000.json')) return { value: session(5000, 'idle') }
+    if (e.path.endsWith('/6000.json')) return { value: session(6000, 'idle') }
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  // The pid walk answers 4242 (this session); ps says 6000 is gone.
+  on('process.run', (_, e) => ({
+    value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : e.argv[0] === 'ps' ? ' 4242\n 5000\n' : '', stderr: '' },
+  }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  const page = pages.at(-1) ?? ''
+  const sessions = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot.sessions
+  expect(sessions).toEqual([
+    { pid: 4242, id: 's-4242', name: 'work-4242', cwd: '~/work/4242', status: 'busy', since: 1000, self: true },
+    { pid: 5000, id: 's-5000', name: 'work-5000', cwd: '~/work/5000', status: 'idle', since: 1000, self: false },
+  ])
+  expect(page).not.toContain('sock')
+})
