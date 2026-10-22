@@ -14,12 +14,31 @@ export type Touch = { at: number; op: FileOp }
 // is the session's own (busy, idle, shell, ...); since is when it last
 // changed; self marks the session that shows the page.
 export type SessionRow = { pid: number; id: string; name: string; cwd: string; status: string; since: number; self: boolean }
+// A file that git reports as changed and not committed. path is relative to
+// the repo; file is the same file as a FILES path (see FileRow), so the two
+// colonies can join on it. state: M changed, A added, D deleted, R renamed,
+// ? untracked. add and del count lines (0 for an untracked or binary file).
+export type GitChange = { path: string; file: string; state: string; add: number; del: number }
+// A repo that holds a file this session used, or the session folder. root is
+// shown like a FILES path; ahead and behind count commits against upstream;
+// commits are the ones ahead (not pushed), newest first.
+export type GitRepo = {
+  root: string
+  name: string
+  branch: string
+  upstream: boolean
+  ahead: number
+  behind: number
+  changes: GitChange[]
+  commits: { hash: string; subject: string }[]
+}
 export type Snapshot = {
   skills: SkillRow[]
   jobs: JobRow[]
   memory: MemoryRow[]
   files: FileRow[]
   sessions: SessionRow[]
+  git: GitRepo[]
   loadedAt: number
   errors: string[]
 }

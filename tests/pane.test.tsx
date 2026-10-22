@@ -359,3 +359,49 @@ test('jobs send their session and folder, and nothing else from the job file', a
   expect(jobs).toEqual([{ id: 'j9', name: 'build', state: 'running', detail: '', session: 'job-session', cwd: '~/work' }])
   expect(page).not.toContain('SECRET')
 })
+
+test('the git colony reads the repo of the session folder, joined to FILES by path', async ($, on) => {
+  const pages: string[] = []
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  const status = [
+    '## main...origin/main [ahead 1, behind 2]',
+    ' M src/app.ts',
+    'A  src/new.ts',
+    '?? notes.md',
+    'R  old.ts -> lib/moved.ts',
+    '@@',
+    '12\t3\tsrc/app.ts',
+    '5\t0\tsrc/new.ts',
+    '-\t-\tlib/moved.ts',
+    '@@',
+    'abc1234 Add the app',
+  ].join('\n')
+  on('process.run', (_, e) => {
+    if (e.argv[0] === 'git' && e.argv.includes('rev-parse')) return { value: { exitCode: 0, stdout: '/work\n', stderr: '' } }
+    if (e.argv[0] === 'sh' && e.argv[3] === 'git') return { value: { exitCode: 0, stdout: status, stderr: '' } }
+    return { value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('fs.read', (_, e) => { throw new Error(`ENOENT ${e.path}`) })
+  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  const page = pages.at(-1) ?? ''
+  const git = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot.git
+  expect(git).toEqual([{
+    root: '/work', name: 'work', branch: 'main', upstream: true, ahead: 1, behind: 2,
+    changes: [
+      { path: 'src/app.ts', file: 'src/app.ts', state: 'M', add: 12, del: 3 },
+      { path: 'src/new.ts', file: 'src/new.ts', state: 'A', add: 5, del: 0 },
+      { path: 'notes.md', file: 'notes.md', state: '?', add: 0, del: 0 },
+      { path: 'lib/moved.ts', file: 'lib/moved.ts', state: 'R', add: 0, del: 0 },
+    ],
+    commits: [{ hash: 'abc1234', subject: 'Add the app' }],
+  }])
+})

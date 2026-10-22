@@ -16,7 +16,7 @@ export const CARAVAN: Theme = {
   legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
-  const CITIES = ['hub:skills', 'hub:files', 'hub:jobs', 'hub:memory', 'hub:sessions'];
+  const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:jobs', 'hub:memory', 'hub:sessions'];
   function anchor(id) {
     const c = owner.get(id);
     return c ? tileCenter(c.q, c.r) : { x: 0, y: 0, z: 0 };
@@ -402,22 +402,40 @@ export const CARAVAN: Theme = {
       score.set(k, s + 0.15 * room + 0.01 * hash(k));
     }
     const ranked = [...score.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
-    let sites = [];
-    for (let gap = 14; gap >= 2 && sites.length < bySize.length; gap--) {
+    // GIT works on the same files as FILES, so its city takes the site
+    // nearest the FILES city (with room for territories between the cities).
+    const near = bySize.includes('hub:git') && bySize.includes('hub:files');
+    const rest = near ? bySize.filter(c => c !== 'hub:git') : bySize;
+    let sites = [], gap = 14;
+    for (; gap >= 2 && sites.length < rest.length; gap--) {
       sites = [];
       for (const k of ranked) {
-        if (sites.length >= bySize.length) break;
+        if (sites.length >= rest.length) break;
         if (sites.every(s => tdist(unkey(s), unkey(k)) >= gap)) sites.push(k);
       }
     }
     owner = new Map();
     held = new Map();
-    bySize.forEach((city, i) => {
+    rest.forEach((city, i) => {
       const k = sites[i] || ranked[i];
       const [q, r] = unkey(k);
       owner.set(city, { q, r, city });
       held.set(k, city);
     });
+    if (near) {
+      const f = owner.get('hub:files'), room = Math.max(6, Math.round(gap * 0.6));
+      let best, bd = Infinity;
+      for (const k of ranked.slice(0, 600)) {
+        const c = unkey(k);
+        if (sites.some(s => tdist(unkey(s), c) < room)) continue;
+        const d = tdist(c, [f.q, f.r]) - 0.05 * (score.get(k) || 0);
+        if (d < bd) { bd = d; best = k; }
+      }
+      const k = best || ranked.find(x => !held.has(x));
+      const [q, r] = unkey(k);
+      owner.set('hub:git', { q, r, city: 'hub:git' });
+      held.set(k, 'hub:git');
+    }
     cityCost = new Map(bySize.map(city => [city, costsFrom(tkey(owner.get(city).q, owner.get(city).r))]));
 
     // Territories, by turns.
