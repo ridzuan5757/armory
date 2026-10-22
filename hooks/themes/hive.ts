@@ -325,15 +325,64 @@ export const HIVE: Theme = {
     }
     return swarm.w > 0 ? nodes.get(swarm.target) : undefined;
   }
-  // Where bee i of the crowd goes: a slot on a slow ring around the target.
-  function swarmAt(home, i, target, t) {
-    if (!target) return home;
+  // Each resident bee steers like a small flyer: a spring pulls it to where
+  // it should be (its slot in the swarm, or its home), drag and a top speed
+  // keep it slow, and a sideways push bends its path into a spiral that
+  // fades near the end, so it glides in and settles. At home and not in a
+  // swarm it sits exactly on its home path. Shades go on only once it has
+  // arrived in the swarm, and come off before it leaves.
+  const flyers = new Map();
+  let flyFrame = 0, lastFly = 0;
+  const VMAX = 40;
+  function slotOf(i, target, t) {
     const a = i * 2.39996 + t * 0.6, r = HEX * (0.75 + 0.3 * (i % 3));
-    const k = swarm.w * swarm.w * (3 - 2 * swarm.w);
-    const x = target.x + Math.cos(a) * r, y = target.y + Math.sin(a) * r * 0.8, z = target.z + 6 + 2 * Math.sin(t * 3 + i);
-    return { x: home.x + (x - home.x) * k, y: home.y + (y - home.y) * k, z: home.z + (z - home.z) * k };
+    return { x: target.x + Math.cos(a) * r, y: target.y + Math.sin(a) * r * 0.8, z: target.z + 6 + 2 * Math.sin(t * 3 + i) };
   }
-  const shadesOf = () => Math.max(0, Math.min(1, (swarm.w - 0.6) / 0.4));
+  function fly(key, home, i, target, t, dt) {
+    let b = flyers.get(key);
+    if (!b) {
+      b = { x: home.x, y: home.y, z: home.z, vx: 0, vy: 0, vz: 0, shade: 0, seed: hash(key), home: true };
+      flyers.set(key, b);
+    }
+    b.seen = flyFrame;
+    const goal = target ? slotOf(i, target, t) : home;
+    const dx = goal.x - b.x, dy = goal.y - b.y, dz = goal.z - b.z;
+    const dist = Math.hypot(dx, dy, dz);
+    // A new goal starts a new trip; the spiral is measured against its length.
+    const goalKey = target ? target.id : 'home';
+    if (b.goalKey !== goalKey) { b.goalKey = goalKey; b.start = Math.max(dist, 1); }
+    if (!target && (b.home || dist < 1.5)) {
+      // Back home: follow the home path exactly.
+      b.x = home.x; b.y = home.y; b.z = home.z; b.vx = b.vy = b.vz = 0; b.home = true;
+    } else if (!target && dist < HEX * 0.8) {
+      // Nearly home: the home path moves (a dance), so ease onto it.
+      b.x += (home.x - b.x) * 0.25; b.y += (home.y - b.y) * 0.25; b.z += (home.z - b.z) * 0.25;
+      b.vx *= 0.7; b.vy *= 0.7; b.vz *= 0.7;
+      b.home = Math.hypot(home.x - b.x, home.y - b.y, home.z - b.z) < 1.5;
+    } else {
+      b.home = false;
+      const k = 1.1 * (0.7 + 0.6 * b.seed), drag = 1.5;
+      // The spiral: a push across the line to the goal. It shrinks with the
+      // square of the part of the trip still left, so the bee curves out at
+      // the start and glides straight in at the end. Each bee turns its own way.
+      const left = Math.min(1, dist / b.start);
+      const side = (b.seed > 0.5 ? 1 : -1) * 30 * (0.6 + b.seed) * left * left;
+      const nx = dist ? -dy / dist : 0, ny = dist ? dx / dist : 0;
+      b.vx += (dx * k - b.vx * drag + nx * side) * dt;
+      b.vy += (dy * k - b.vy * drag + ny * side) * dt;
+      b.vz += (dz * k - b.vz * drag + Math.sin(t * 2 + b.seed * 9) * 4) * dt;
+      const v = Math.hypot(b.vx, b.vy, b.vz);
+      if (v > VMAX) { b.vx *= VMAX / v; b.vy *= VMAX / v; b.vz *= VMAX / v; }
+      b.x += b.vx * dt; b.y += b.vy * dt; b.z += b.vz * dt;
+    }
+    const arrived = target && dist < HEX * 1.4;
+    b.shade += ((arrived ? 1 : 0) - b.shade) * Math.min(1, dt * 2.5);
+    return b;
+  }
+  // Forgets the bees that were not drawn this frame (a job ended, ...).
+  function flyDone() {
+    for (const [key, b] of flyers) if (b.seen !== flyFrame) flyers.delete(key);
+  }
 
   function draw(now) {
     const t = now / 1000;
@@ -438,12 +487,15 @@ export const HIVE: Theme = {
 
     // Bees on trips, with a short trail. Wanderers join a swarm.
     const crowd = swarmUpdate(order);
+    const dt = lastFly ? Math.min(0.1, (now - lastFly) / 1000) : 0;
+    lastFly = now;
+    flyFrame++;
     let slot = 0;
     for (const b of bees) {
       let p = beePos(b, now);
       if (!p) continue;
       if (b.kind === 'wander' && hum <= 0 && !crowd) continue;
-      if (b.kind === 'wander') p = { ...swarmAt(p, slot++, crowd, t), phase: p.phase };
+      if (b.kind === 'wander') p = { ...fly('w' + b.seed, p, slot++, crowd, t, dt), phase: p.phase };
       const s = screen(p.x, p.y, p.z);
       b.tail.push({ x: s.x, y: s.y });
       if (b.tail.length > 6) b.tail.shift();
@@ -454,7 +506,9 @@ export const HIVE: Theme = {
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(b.tail[i - 1].x, b.tail[i - 1].y); ctx.lineTo(b.tail[i].x, b.tail[i].y); ctx.stroke();
       }
-      drawBee({ x: s.x, y: s.y }, b.tail[b.tail.length - 2], t + b.seed, fade, s.f, b.op === 'write' && p.phase !== 'back', shadesOf());
+      // A tool bee at the swarm's cell wears shades while it stays there.
+      const shades = b.kind === 'wander' ? p.shade : crowd && b.target === swarm.target && p.phase === 'stay' ? 1 : 0;
+      drawBee({ x: s.x, y: s.y }, b.tail[b.tail.length - 2], t + b.seed, fade, s.f, b.op === 'write' && p.phase !== 'back', shades);
     }
 
     // Bees at work on each running job: three that circle close over it.
@@ -463,29 +517,33 @@ export const HIVE: Theme = {
       for (let i = 0; i < 3; i++) {
         const a = t * (1.8 + 0.4 * i) + i * 2.1 + n.phase;
         const home = { x: n.x + Math.cos(a) * HEX * 0.8, y: n.y + Math.sin(a * 1.3) * HEX * 0.6, z: n.z + 5 };
-        const q = swarmAt(home, slot++, crowd, t);
+        const q = fly('j' + n.id + i, home, slot++, crowd, t, dt);
         const s = screen(q.x, q.y, q.z);
-        const seen = crowd && swarm.w > 0.5 ? crowd : n;
-        drawBee({ x: s.x, y: s.y }, { x: s.x - Math.sin(a), y: s.y + Math.cos(a) }, t + i, (inFocus(seen) ? 1 : 0.35) * s.fog, s.f, false, shadesOf());
+        const back = q.home ? { x: s.x - Math.sin(a), y: s.y + Math.cos(a) } : screen(q.x - q.vx * 0.05, q.y - q.vy * 0.05, q.z);
+        const seen = !q.home && crowd ? crowd : n;
+        drawBee({ x: s.x, y: s.y }, back, t + i, (inFocus(seen) ? 1 : 0.35) * s.fog, s.f, false, q.shade);
       }
     }
 
     // At rest, one bee dances a waggle figure-8 beside each queen cell: the
     // straight run shakes side to side, then it loops back. In a swarm the
     // queen bees fly to the crowd too, so it is never small.
-    if ((hum > 0 || crowd) && !calm) for (const n of order) {
+    if (!calm) for (const n of order) {
       if (n.kind !== 'hub') continue;
       const u = t * 1.4 + n.phase;
       const run = Math.cos(u) > 0.3;
       const wag = run ? Math.sin(t * 40) * 1.6 : 0;
       const x = n.x + HEX * 1.9 + Math.sin(u) * HEX * 0.9 + wag;
       const y = n.y + Math.sin(u) * Math.cos(u) * HEX * 0.9;
-      const q = swarmAt({ x, y, z: n.z + 5 }, slot++, crowd, t);
+      const q = fly('q' + n.id, { x, y, z: n.z + 5 }, slot++, crowd, t, dt);
+      // A queen bee shows while it dances at rest, or while it is away.
+      if (hum <= 0 && q.home) continue;
       const s = screen(q.x, q.y, q.z);
-      const back = screen(q.x - Math.cos(u) * 2, q.y - Math.cos(2 * u) * 2, q.z);
-      const seen = crowd && swarm.w > 0.5 ? crowd : n;
-      drawBee({ x: s.x, y: s.y }, { x: back.x, y: back.y }, t, Math.max(hum, swarm.w) * (inFocus(seen) ? 1 : 0.35) * s.fog, s.f, false, shadesOf());
+      const back = q.home ? screen(q.x - Math.cos(u) * 2, q.y - Math.cos(2 * u) * 2, q.z) : screen(q.x - q.vx * 0.05, q.y - q.vy * 0.05, q.z);
+      const seen = !q.home && crowd ? crowd : n;
+      drawBee({ x: s.x, y: s.y }, { x: back.x, y: back.y }, t, (q.home ? hum : 1) * (inFocus(seen) ? 1 : 0.35) * s.fog, s.f, false, q.shade);
     }
+    flyDone();
 
     // Labels keep one screen size, with a halo of the background. A small
     // cell shows its name only when it glows, when the pointer is on it or a
