@@ -61,7 +61,9 @@ Then start a new session, or run `/reload-plugins`.
 | `/armory results` | Shows the last speed test results. |
 
 In the split: drag to turn, pinch or scroll to zoom, put the pointer on an
-item to see its details.
+item to see its details. The `caravan` map does not turn, as in a strategy
+game: drag or use the arrow keys (or WASD) to move the map, and zoom to the
+point under the pointer.
 
 ## Links beside the chat (optional, macOS)
 

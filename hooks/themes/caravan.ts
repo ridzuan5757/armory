@@ -13,9 +13,9 @@ import { HORSE_KIT } from './horse'
 
 export const CARAVAN: Theme = {
   name: 'caravan',
-  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · drag to turn · pinch or scroll to zoom',
+  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · drag or arrow keys to move the map · pinch or scroll to zoom',
   script: HORSE_KIT + `
-  const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false;
+  const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
   const CITIES = ['hub:skills', 'hub:files', 'hub:jobs', 'hub:memory', 'hub:sessions'];
   function anchor(id) {
     const c = owner.get(id);
@@ -481,7 +481,6 @@ export const CARAVAN: Theme = {
     lastSim = now;
     alpha *= 0.988;
     rest = !calm && view.auto > 0 ? Math.min(1, rest + 0.01) : Math.max(0, rest - 0.05);
-    faceFront(rest, 0, 0.5);
     for (const n of nodes.values()) {
       const o = owner.get(n.id);
       if (!o) continue;

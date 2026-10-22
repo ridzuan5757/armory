@@ -15,6 +15,9 @@ import { RACE } from './themes/race'
 //   BUNDLE     split more than six children into bundles on joints
 //   NODE_DRAG  a drag on a node moves it (else the drag turns the view)
 //   AUTO_TURN  the view turns slowly at rest
+// A theme can also give MAP_VIEW = { pitch }: then the view stays at that
+// tilt and never turns, a drag or the arrow keys move the map, and a zoom
+// keeps the point under the pointer in place, as in a strategy game.
 export type Theme = { name: string; legend: string; script: string }
 
 export const THEMES: Record<string, Theme> = { mold: MOLD, orbit: ORBIT, hive: HIVE, race: RACE, caravan: CARAVAN }
@@ -419,7 +422,9 @@ const SHARED_B = `
   // The view turns the network by yaw and pitch, then projects it with a
   // little perspective. The camera fits a sphere around the nodes, so the
   // zoom stays the same while the network turns.
-  const view = { yaw: 0.3, pitch: 0.2, vyaw: 0, vpitch: 0, zoom: 1, idle: 0, auto: 0 };
+  const view = { yaw: 0.3, pitch: 0.2, vyaw: 0, vpitch: 0, zoom: 1, idle: 0, auto: 0, px: 0, py: 0, vpx: 0, vpy: 0 };
+  const MAP = typeof MAP_VIEW === 'undefined' ? undefined : MAP_VIEW;
+  if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; }
   const DIST = 1600, TOP = 56, BOTTOM = 44, SIDE = 24;
   // With a focus, only the colony of the focus counts, and the center moves
   // halfway to the node itself. The camera eases there and back.
@@ -455,7 +460,7 @@ const SHARED_B = `
     cam.z += (cz - cam.z) * k; cam.r += (r - cam.r) * k;
   }
   function project(n) {
-    const x = n.x - cam.x, y = n.y - cam.y, z = n.z - cam.z;
+    const x = n.x - cam.x - view.px, y = n.y - cam.y - view.py, z = n.z - cam.z;
     const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw), cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
     const x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
     const y2 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
@@ -470,7 +475,7 @@ const SHARED_B = `
     const x1 = (px - W / 2) / f, y2 = (py - (H + TOP - BOTTOM) / 2) / f;
     const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw), cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
     const y = y2 * cp + depth * sp, z1 = -y2 * sp + depth * cp;
-    return { x: x1 * cy - z1 * sy + cam.x, y: y + cam.y, z: x1 * sy + z1 * cy + cam.z };
+    return { x: x1 * cy - z1 * sy + cam.x + view.px, y: y + cam.y + view.py, z: x1 * sy + z1 * cy + cam.z };
   }
 
   let hover, drag, turn;
@@ -528,6 +533,14 @@ const SHARED_B = `
       alpha = Math.max(alpha, 0.25);
       return;
     }
+    if (turn && MAP) {
+      // The map moves with the pointer: a screen step over the scale.
+      const f = cam.s * view.zoom;
+      view.vpx = -(ev.clientX - turn.x) / f; view.vpy = -(ev.clientY - turn.y) / (f * Math.cos(view.pitch));
+      turn.x = ev.clientX; turn.y = ev.clientY;
+      movePan(view.vpx, view.vpy);
+      return;
+    }
     if (turn) {
       const dx = ev.clientX - turn.x, dy = ev.clientY - turn.y;
       turn.x = ev.clientX; turn.y = ev.clientY;
@@ -552,19 +565,47 @@ const SHARED_B = `
     drag = NODE_DRAG ? pick(ev.clientX, ev.clientY) : undefined;
     if (drag) { canvas.style.cursor = 'grabbing'; return; }
     turn = { x: ev.clientX, y: ev.clientY };
-    view.vyaw = view.vpitch = 0;
+    view.vyaw = view.vpitch = view.vpx = view.vpy = 0;
+    if (MAP) canvas.style.cursor = 'grabbing';
   });
   canvas.addEventListener('pointerup', () => {
     drag = undefined; turn = undefined;
     if (calm) view.vyaw = view.vpitch = 0;
-    canvas.style.cursor = hover ? 'grab' : 'move';
+    canvas.style.cursor = hover ? 'grab' : MAP ? 'grab' : 'move';
   });
+  // The map moves only until its edge meets the edge of the pane. When the
+  // whole map shows, it stays in the middle.
+  function movePan(dx, dy) {
+    const b = typeof fitBounds === 'function' ? fitBounds() : { x: 0, y: 0, w: 2 * cam.r, h: 2 * cam.r };
+    const f = cam.s * view.zoom, cp = Math.cos(view.pitch);
+    const rx = Math.max(0, b.w / 2 - (W - 2 * SIDE) / (2 * f)), ry = Math.max(0, (b.h / 2 - (H - TOP - BOTTOM) / (2 * f)) / cp);
+    view.px = Math.max(b.x - rx, Math.min(b.x + rx, cam.x + view.px + dx)) - cam.x;
+    view.py = Math.max(b.y - ry, Math.min(b.y + ry, cam.y + view.py + dy)) - cam.y;
+  }
+  if (MAP) {
+    // Arrow keys and WASD move the map by a fifth of the pane.
+    const KEYS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], a: [-1, 0], d: [1, 0], w: [0, -1], s: [0, 1] };
+    addEventListener('keydown', ev => {
+      const k = KEYS[ev.key];
+      if (!k) return;
+      ev.preventDefault();
+      touch();
+      const f = cam.s * view.zoom;
+      view.vpx = k[0] * W * 0.2 / f * 0.2; view.vpy = k[1] * H * 0.2 / (f * Math.cos(view.pitch)) * 0.2;
+    });
+  }
   // A pinch arrives as a wheel event with ctrlKey; a two-finger scroll as a
-  // plain wheel event. Both zoom around the center of the pane.
+  // plain wheel event. Both zoom around the center of the pane; on a map,
+  // around the point under the pointer.
   addEventListener('wheel', ev => {
     ev.preventDefault();
     touch();
-    view.zoom = Math.max(0.4, Math.min(4, view.zoom * Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.002))));
+    const old = cam.s * view.zoom;
+    view.zoom = Math.max(MAP ? 0.8 : 0.4, Math.min(MAP ? 8 : 4, view.zoom * Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.002))));
+    if (MAP) {
+      const now = cam.s * view.zoom, gap = 1 / old - 1 / now;
+      movePan((ev.clientX - W / 2) * gap, (ev.clientY - (H + TOP - BOTTOM) / 2) * gap / Math.cos(view.pitch));
+    }
   }, { passive: false });
   canvas.addEventListener('pointerleave', () => { if (!drag && !turn) { hover = undefined; tip.style.display = 'none'; } });
 
@@ -574,17 +615,29 @@ const SHARED_B = `
   function frame(now) {
     requestAnimationFrame(frame);
     const spin = Math.abs(view.vyaw) + Math.abs(view.vpitch) > 0.0005;
-    // After 4 s with no input, the network turns slowly; the speed eases in.
+    // After 4 s with no input (20 s on a map), the network turns slowly; the
+    // speed eases in.
     // It stops while the pointer is on a node, so the tooltip stays put.
-    const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > 4000;
+    const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > (MAP ? 20000 : 4000);
     view.auto = idle ? Math.min(1, view.auto + 0.02) : 0;
-    const busy = alpha > 0.004 || drag || turn || spin || focus || view.auto > 0 || now - lastData < 1500;
+    const busy = alpha > 0.004 || drag || turn || spin || Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || focus || view.auto > 0 || now - lastData < 1500;
     if (now - last < (busy ? 33 : calm ? 1000 : 66)) return;
     last = now;
     if (view.auto > 0) {
       if (AUTO_TURN) view.yaw += 0.0035 * view.auto;
       // The zoom goes slowly back to the size that fits the pane.
       view.zoom += (1 - view.zoom) * 0.012 * view.auto;
+    }
+    if (MAP) {
+      // A map keeps its tilt. After a drag it glides a little; at rest, or
+      // when an event has the focus, it goes slowly back to the middle.
+      view.yaw = 0; view.pitch = MAP.pitch; view.vyaw = view.vpitch = 0;
+      if (!turn) {
+        movePan(view.vpx, view.vpy);
+        view.vpx *= 0.8; view.vpy *= 0.8;
+        const back = view.auto > 0 ? 0.012 * view.auto : focus ? 0.05 : 0;
+        view.px -= view.px * back; view.py -= view.py * back;
+      }
     }
     if (!turn && spin) {
       view.yaw += view.vyaw; view.pitch = clampPitch(view.pitch + view.vpitch);
