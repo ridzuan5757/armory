@@ -643,7 +643,7 @@ async function refresh($: EngineInterface) {
 
 // The web page and the last Raster size live only in this process; a reload
 // starts them over, and /armory web turns the page on again.
-const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME, page: '' }
+const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME, view: 'flat', page: '' }
 let mounted: { columns: number; rows: number; tab: Tab } | undefined
 
 async function writeData($: EngineInterface, snap: Snapshot, pollMs: number) {
@@ -651,7 +651,7 @@ async function writeData($: EngineInterface, snap: Snapshot, pollMs: number) {
   // on disk must be the current one first, or it would reload without end.
   if (web.page !== buildOf(web.theme)) await writePage($)
   web.seq++
-  await $.fs.write(`${web.dir}/data.js`, dataScript(snap, web.seq, pollMs, web.theme))
+  await $.fs.write(`${web.dir}/data.js`, dataScript(snap, web.seq, pollMs, web.theme, web.view))
 }
 
 // Each session has its own folder for the page and its data, named like the
@@ -672,6 +672,7 @@ async function openWeb($: EngineInterface, isFallbackOk = true) {
   }
   web.dir = dir
   web.theme = await themeOf($)
+  web.view = await viewOf($)
   await writePage($)
   web.isOn = true
   await writeData($, await read($, snapshot), 1000)
@@ -720,6 +721,24 @@ async function themeOf($: EngineInterface) {
   const saved = await $.store.get('theme').catch(() => undefined)
 
   return typeof saved === 'string' && saved in THEMES ? saved : DEFAULT_THEME
+}
+
+// The view of a map theme (caravan): flat, or a turning globe. Kept for new
+// sessions; the page reads it from the data.
+const VIEWS = ['flat', 'globe']
+async function viewOf($: EngineInterface) {
+  const saved = await $.store.get('view').catch(() => undefined)
+
+  return typeof saved === 'string' && VIEWS.includes(saved) ? saved : 'flat'
+}
+async function setView($: EngineInterface, name: string) {
+  if (!name) return `View: ${await viewOf($)}. Views: ${VIEWS.join(', ')} (caravan). Change it with /armory view <name>, or press G in the split.`
+  if (!VIEWS.includes(name)) return `No view named ${name}. Views: ${VIEWS.join(', ')}.`
+  await $.store.set('view', name)
+  web.view = name
+  if (web.isOn) await writeData($, await read($, snapshot), 1000)
+
+  return `Armory view: ${name}.`
 }
 
 // Saves the theme and rewrites the page. An open split sees the new theme
@@ -934,6 +953,7 @@ export const register: Register = on => {
     }
     if (verb === 'results') return { text: await results($) }
     if (verb === 'theme') return { text: await setTheme($, e.args.trim().split(/\s+/)[1] ?? '') }
+    if (verb === 'view') return { text: await setView($, e.args.trim().split(/\s+/)[1] ?? '') }
     if (verb === 'close') {
       await closeWeb($)
       web.isOn = false

@@ -240,6 +240,13 @@ test('/armory theme saves the theme and rewrites the page for it', async ($, on)
   expect(writes.get('index.html')).toContain(`BUILD = '${build}'`)
   // The store keeps it: the plain command reads it back.
   expect(await run('theme')).toMatch(/Theme: orbit\./)
+
+  // The caravan view: flat by default, globe by the command, in the data.
+  expect(await run('view')).toMatch(/View: flat\. Views: flat, globe/)
+  expect(await run('view cube')).toMatch(/No view named cube/)
+  expect(await run('view globe')).toBe('Armory view: globe.')
+  expect(writes.get('data.js')).toContain('"view":"globe"')
+  expect(await run('view')).toMatch(/View: globe\./)
 })
 
 test('skill use counts come from grep | uniq, so history.jsonl may pass 4 MiB', async ($, on) => {

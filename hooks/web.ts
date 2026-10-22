@@ -753,7 +753,7 @@ const SHARED_B = `
     }
     if (turn && MAP) {
       // The map moves with the pointer: a screen step over the scale.
-      const f = cam.s * view.zoom;
+      const f = pxPer();
       view.vpx = -(ev.clientX - turn.x) / f; view.vpy = -(ev.clientY - turn.y) / (f * Math.cos(view.pitch));
       turn.x = ev.clientX; turn.y = ev.clientY;
       movePan(view.vpx, view.vpy);
@@ -791,12 +791,15 @@ const SHARED_B = `
     if (calm) view.vyaw = view.vpitch = 0;
     canvas.style.cursor = hover ? 'grab' : MAP ? 'grab' : 'move';
   });
+  // Screen pixels per world unit at the middle of the view: what a drag or a
+  // key moves by. A theme with its own projection gives MAP_SCALE.
+  const pxPer = () => typeof MAP_SCALE === 'function' ? MAP_SCALE() : cam.s * view.zoom;
   // The map moves only until its edge meets the edge of the pane. When the
   // whole map shows, it stays in the middle. A map that wraps (b.wrap, its
   // width) has no east or west edge: the view goes on around.
   function movePan(dx, dy) {
     const b = typeof fitBounds === 'function' ? fitBounds() : { x: 0, y: 0, w: 2 * cam.r, h: 2 * cam.r };
-    const f = cam.s * view.zoom, cp = Math.cos(view.pitch);
+    const f = pxPer(), cp = Math.cos(view.pitch);
     const rx = Math.max(0, b.w / 2 - (W - 2 * SIDE) / (2 * f)), ry = Math.max(0, (b.h / 2 - (H - TOP - BOTTOM) / (2 * f)) / cp);
     if (b.wrap) {
       const x = cam.x + view.px + dx;
@@ -820,7 +823,7 @@ const SHARED_B = `
       if (!k) return;
       ev.preventDefault();
       touch();
-      const f = cam.s * view.zoom;
+      const f = pxPer();
       view.vpx = k[0] * W * 0.2 / f * 0.2; view.vpy = k[1] * H * 0.2 / (f * Math.cos(view.pitch)) * 0.2;
     });
   }
@@ -840,7 +843,7 @@ const SHARED_B = `
     ev.preventDefault();
     touch();
     if (MAP && !ev.ctrlKey) {
-      const f = cam.s * view.zoom;
+      const f = pxPer();
       view.vpx = view.vpy = 0;
       movePan(ev.deltaX / f, ev.deltaY / (f * Math.cos(view.pitch)));
       return;
@@ -911,6 +914,8 @@ const SHARED_B = `
     // reloads to show it.
     if ((d.theme && d.theme !== THEME) || (d.build && d.build !== BUILD)) { location.reload(); return; }
     if (d.seq === lastSeq) return;
+    // A theme can read the data's extra fields (caravan: the view).
+    if (typeof onData === 'function') onData(d);
     lastSeq = d.seq; pollMs = d.pollMs || 1000; frames++;
     const s = d.snapshot;
     const active = s.jobs.filter(j => j.state !== 'done').length;
@@ -941,5 +946,5 @@ const SHARED_B = `
   poll();
 `
 
-export const dataScript = (snapshot: Snapshot, seq: number, pollMs: number, theme: string) =>
-  `window.armoryData(${JSON.stringify({ seq, pollMs, theme, build: buildOf(theme), snapshot })})\n`
+export const dataScript = (snapshot: Snapshot, seq: number, pollMs: number, theme: string, view = 'flat') =>
+  `window.armoryData(${JSON.stringify({ seq, pollMs, theme, view, build: buildOf(theme), snapshot })})\n`

@@ -49,6 +49,39 @@ export const CARAVAN: Theme = {
   const WW = TILE * Math.sqrt(3) * COLS;
   const wrapDelta = dx => dx - WW * Math.round(dx / WW);
   const nearX = x => { const cx = cam.x + view.px; return cx + wrapDelta(x - cx); };
+
+  // The globe view: the flat map wrapped on a sphere and seen from far away
+  // (orthographic). The middle of the view (camera and pan) faces the
+  // viewer, so a drag turns the globe and a focus turns its colony to the
+  // front. A point on the back side has no place on screen (NaN), and the
+  // canvas skips what is drawn at NaN. G in the split, or /armory view,
+  // switches between the views.
+  const GLOBE = { on: false, seen: '' }, globeStart = performance.now();
+  const latAt = y => 80 - ((y + OY) / (TILE * 1.5) + 0.5) * DEG;
+  function globeRadius() {
+    const base = Math.min(W - 2 * SIDE, H - TOP - BOTTOM) / 2 * 0.92;
+    return Math.max(base, cam.s * WW / (2 * Math.PI)) * view.zoom;
+  }
+  // Screen pixels per world unit at the middle: what the engine moves by.
+  const MAP_SCALE = () => (GLOBE.on ? globeRadius() * 2 * Math.PI / WW : cam.s * view.zoom);
+  function globeScreen(x, y, z) {
+    const R = globeRadius(), f = R * 2 * Math.PI / WW;
+    const l = wrapDelta(x - cam.x - view.px) / WW * 2 * Math.PI;
+    const p = latAt(y) * Math.PI / 180, p0 = Math.max(-70, Math.min(70, latAt(cam.y + view.py))) * Math.PI / 180;
+    const cl = Math.cos(l), cp = Math.cos(p), sp = Math.sin(p), cp0 = Math.cos(p0), sp0 = Math.sin(p0);
+    const D = sp0 * sp + cp0 * cp * cl;
+    if (D < 0.02) return { x: NaN, y: NaN, f: f * 0.1, fog: 0, depth: D - 2, back: true };
+    return { x: W / 2 + R * cp * Math.sin(l), y: (H + TOP - BOTTOM) / 2 - R * (cp0 * sp - sp0 * cp * cl) - (z || 0) * f * 0.6,
+      f: f * (0.35 + 0.65 * D), fog: 0.45 + 0.55 * D, depth: D };
+  }
+  // The view from the data, set by /armory view; G changes it here until
+  // the next change of the setting.
+  function onData(d) {
+    if (d.view === GLOBE.seen) return;
+    GLOBE.seen = d.view;
+    GLOBE.on = d.view === 'globe';
+  }
+  addEventListener('keydown', ev => { if (ev.key === 'g' || ev.key === 'G') GLOBE.on = !GLOBE.on; });
   const unkey = k => k.split(',').map(Number);
   const canon = cell => unkey(tkey(...cell));
   function ringAround(q, r, k) {
@@ -958,6 +991,11 @@ export const CARAVAN: Theme = {
     const dt = lastSim ? Math.min(0.1, (now - lastSim) / 1000) : 0;
     lastSim = now;
     alpha *= 0.988;
+    // The globe turns slowly (4 degrees a second) 20 s after the last input,
+    // for three minutes after the last event or the page load; then it stops.
+    if (GLOBE.on && !calm && !focus && now - view.idle > 20000 && now - Math.max(stay ? stay.since : 0, globeStart) < 180000) {
+      view.px = wrapDelta(view.px + dt * WW / 360 * 4);
+    }
     rest = !calm && view.auto > 0 ? Math.min(1, rest + 0.01) : Math.max(0, rest - 0.05);
     for (const n of nodes.values()) {
       const o = owner.get(n.id);
@@ -1038,6 +1076,7 @@ export const CARAVAN: Theme = {
   // The outline of a tile on screen.
   function tilePath(c, scale) {
     const pts = [], cx = nearX(c.x);
+    if (GLOBE.on && globeScreen(c.x, c.y, 0).back) return pts;
     for (let i = 0; i < 6; i++) {
       const a = Math.PI / 6 + i * Math.PI / 3;
       pts.push(screenRaw(cx + Math.cos(a) * TILE * scale, c.y + Math.sin(a) * TILE * scale, 0));
@@ -1121,6 +1160,7 @@ export const CARAVAN: Theme = {
     for (const v of volcanoes) {
       const st = v.state || { stage: 'dormant', size: 0.7 };
       const c = centerOf(v.k), base = screen(c.x, c.y, 0), u = TILE * base.f * st.size;
+      if (!Number.isFinite(base.x)) continue;
       const hot = st.stage === 'erupting' ? 1 : st.stage === 'growing' ? 0.4 : st.stage === 'cooling' ? 0.2 : 0;
       const burst = Math.max(v === nearest ? write : 0, st.stage === 'erupting' ? 0.7 : 0);
       pen.fillStyle = 'rgba(64,52,48,0.98)';
@@ -1259,6 +1299,7 @@ export const CARAVAN: Theme = {
     const pulse = calm ? 1 : 0.5 + 0.5 * Math.sin(t * 7);
     const outline = (k, color, alpha, dash) => {
       const pts = tilePath(centerOf(k), 0.97);
+      if (!pts.length) return;
       fillPath(pts);
       pen.fillStyle = rgba(color, (0.2 + 0.3 * pulse) * alpha);
       pen.fill();
@@ -1299,6 +1340,7 @@ export const CARAVAN: Theme = {
       if (age >= 1 || !owner.has(city)) { tally.delete(city); continue; }
       const fade = Math.min(1, 4 * (1 - age));
       const o = owner.get(city), c = tileCenter(o.q, o.r), s = screen(c.x, c.y, 0);
+      if (!Number.isFinite(s.x)) continue;
       const parts = [];
       if (v.gain) parts.push(['+' + v.gain, '#7be08a']);
       if (v.lose) parts.push(['\u2212' + v.lose, '#ff6b6b']);
@@ -1448,6 +1490,7 @@ export const CARAVAN: Theme = {
         const dx = to.x - from.x, dy = to.y - from.y, dl = Math.hypot(dx, dy) || 1;
         const a = screenRaw(from.x, from.y, 0), b = screenRaw(to.x, to.y, 0);
         const m = screenRaw(c.x - dy / dl * bend, c.y + dx / dl * bend, 0);
+        if (!Number.isFinite(a.x + b.x + m.x)) continue;
         const w = TILE * 0.46 * m.f;
         const city = tl.city && nodes.get(tl.city);
         const dim = city ? (inFocus(city) ? 1 : 0.5) : 0.8;
@@ -1491,11 +1534,23 @@ export const CARAVAN: Theme = {
     pen.setTransform(1, 0, 0, 1, 0, 0);
     pen.clearRect(0, 0, cw, ch);
     pen.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // The globe: a soft atmosphere and a dark sea disc under the tiles.
+    if (GLOBE.on) {
+      const R = globeRadius(), gx = W / 2, gy = (H + TOP - BOTTOM) / 2;
+      const air = pen.createRadialGradient(gx, gy, R * 0.98, gx, gy, R * 1.08);
+      air.addColorStop(0, 'rgba(120,170,230,0.35)');
+      air.addColorStop(1, 'rgba(120,170,230,0)');
+      pen.fillStyle = air;
+      pen.beginPath(); pen.arc(gx, gy, R * 1.08, 0, 6.2832); pen.fill();
+      pen.fillStyle = '#16293d';
+      pen.beginPath(); pen.arc(gx, gy, R, 0, 6.2832); pen.fill();
+    }
     // Tiles: terrain, a tint of the owner's color, the season, and a mark.
     const cal = calendar();
     const list = [...tiles.entries()].map(([k, tl]) => ({ k, tl, c: tileCenter(tl.q, tl.r) }));
     for (const { k, tl, c } of list) {
       const pts = tilePath(c, 0.97);
+      if (!pts.length) continue;
       const s = screen(c.x, c.y, 0);
       const city = tl.city && nodes.get(tl.city);
       const dim = city ? (inFocus(city) ? 1 : 0.5) : 0.8;
@@ -1513,6 +1568,8 @@ export const CARAVAN: Theme = {
           : local === 1 && (tl.terrain === 'desert' || tl.terrain === 'plains' || tl.terrain === 'sand') ? ['#ffd27a', 0.14] : undefined;
         if (tint) { pen.fillStyle = rgba(tint[0], tint[1] * dim * s.fog); pen.fill(); }
       }
+      // On the globe, small or far tiles skip their marks.
+      if (GLOBE.on && (!Number.isFinite(s.x) || s.f * TILE < 5)) continue;
       if (tl.terrain !== 'volcano' && (tl.terrain !== 'deep' || hash(k) < 0.2)) terrainMark(tl.terrain, s.x, s.y, s.f, dim * s.fog, hash(k), t);
     }
 
@@ -1525,6 +1582,7 @@ export const CARAVAN: Theme = {
       const city = nodes.get(tl.city);
       if (!city) continue;
       const pts = tilePath(c, 0.9);
+      if (!pts.length) continue;
       for (let i = 0; i < 6; i++) {
         // Edge i joins corners i and i + 1. The neighbor across it sits at
         // twice the edge's middle from this tile's center.
@@ -1566,7 +1624,8 @@ export const CARAVAN: Theme = {
   }
   function mapKey(fc) {
     const q = p => Math.round(p.x * 4) + ':' + Math.round(p.y * 4);
-    return [q(screenRaw(-OX, -OY, 0)), q(screenRaw(OX, -OY, 0)), q(screenRaw(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n, terraGen].join(' ');
+    return [q(screenRaw(-OX, -OY, 0)), q(screenRaw(OX, -OY, 0)), q(screenRaw(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n, terraGen,
+      GLOBE.on ? 'globe ' + Math.round((cam.x + view.px) * 2) + ' ' + Math.round((cam.y + view.py) * 2) + ' ' + Math.round(globeRadius() * 2) : 'flat'].join(' ');
   }
 
   function draw(now) {
@@ -1576,7 +1635,10 @@ export const CARAVAN: Theme = {
     pen.globalCompositeOperation = 'source-over';
     pen.fillStyle = '#292c33';
     pen.fillRect(0, 0, W, H);
-    for (const n of nodes.values()) { const x = n.x; n.x = nearX(x); project(n); n.x = x; }
+    for (const n of nodes.values()) {
+      if (GLOBE.on) { const p = globeScreen(n.x, n.y, n.z); n.sx = p.x; n.sy = p.y; n.sf = p.f; n.depth = p.depth; n.fog = p.fog; continue; }
+      const x = n.x; n.x = nearX(x); project(n); n.x = x;
+    }
     const ft = focus && nodes.get(focus.id);
     const fc = ft && (ft.kind === 'hub' ? ft.id : ft.colony);
     const inFocus = n => !fc || n.id === fc || n.colony === fc;
@@ -1601,6 +1663,7 @@ export const CARAVAN: Theme = {
     // Cities and houses, far ones first.
     const order = [...nodes.values()].filter(n => owner.has(n.id)).sort((p, q) => p.depth - q.depth);
     for (const n of order) {
+      if (!Number.isFinite(n.sx)) continue;
       const g = ease(grown(n.born, now, 600)) * (n.dying ? 1 - grown(n.dying, now, 600) : 1);
       if (g <= 0) continue;
       const heat = heatOf(n);
@@ -1662,7 +1725,11 @@ export const CARAVAN: Theme = {
       if (h.pi >= h.path.length - 1) continue;
       let x = nearX(h.x);
       const pts = [screenRaw(x, h.y, 0), ...h.path.slice(h.pi + 1).map(k => { const c = centerOf(k); x += wrapDelta(c.x - x); return screenRaw(x, c.y, 0); })];
-      pen.beginPath(); pts.forEach((p, j) => (j ? pen.lineTo(p.x, p.y) : pen.moveTo(p.x, p.y))); pen.stroke();
+      // A route breaks where it goes behind the globe.
+      pen.beginPath();
+      let down = false;
+      for (const p of pts) { if (!Number.isFinite(p.x)) { down = false; continue; } down ? pen.lineTo(p.x, p.y) : pen.moveTo(p.x, p.y); down = true; }
+      pen.stroke();
     }
     pen.setLineDash([]);
 
@@ -1670,6 +1737,7 @@ export const CARAVAN: Theme = {
     // On water a horse sits in a small boat.
     const herd = [...horses.values()].map(h => ({ h, d: screen(h.x, h.y, h.z).depth })).sort((p, q) => p.d - q.d);
     for (const { h } of herd) {
+      if (!Number.isFinite(screen(h.x, h.y, h.z).x)) continue;
       paintHorse(h, t, 1, Object.assign({ shades: h.shade || 0, carry: h.carry }, h.boat ? { run: 0 } : {}));
       if (h.boat) {
         const s = screen(h.x, h.y, h.z), R = 6 * Math.max(1, s.f), rock = calm ? 0 : Math.sin(t * 3 + h.seed * 9) * 0.08;
