@@ -320,7 +320,10 @@ export function parseGit(text: string, root: string, show: (path: string) => str
 // in the file. The tools the model has now give the servers that connected
 // (mcp__<server>__<tool>; a server name in a tool name has each character
 // outside [A-Za-z0-9_-] as _). A server with only its log-in tools needs a
-// log-in; a configured server with no tools did not connect.
+// log-in; a configured server with no tools did not connect. The colony
+// shows only servers you use: the connected ones, the ones in your config,
+// and the claude.ai connectors you connected before (claudeAiMcpEverConnected
+// in ~/.claude.json); a default connector you never connected is left out.
 const mcpKey = (name: string) => name.replace(/[^A-Za-z0-9_-]/g, '_')
 const AUTH_TOOL = /^(authenticate|complete_authentication)$/
 
@@ -328,10 +331,13 @@ async function loadMcp($: EngineInterface, home: string, cwd: string): Promise<M
   const names = (o: unknown) => Object.entries((o ?? {}) as Record<string, { type?: unknown }>)
     .map(([name, v]) => ({ name, type: typeof v?.type === 'string' ? v.type : 'stdio' }))
   const configured: { name: string; scope: string; type: string }[] = []
+  let ever: string[] = []
   try {
-    const user = JSON.parse(await $.fs.read(`${home}/.claude.json`)) as { mcpServers?: unknown; projects?: Record<string, { mcpServers?: unknown }> }
+    const user = JSON.parse(await $.fs.read(`${home}/.claude.json`)) as {
+      mcpServers?: unknown; projects?: Record<string, { mcpServers?: unknown }>; claudeAiMcpEverConnected?: unknown }
     for (const s of names(user.mcpServers)) configured.push({ ...s, scope: 'user' })
     for (const s of names(user.projects?.[cwd]?.mcpServers)) configured.push({ ...s, scope: 'local' })
+    if (Array.isArray(user.claudeAiMcpEverConnected)) ever = user.claudeAiMcpEverConnected.filter((n): n is string => typeof n === 'string')
   } catch {
     // No user config: only the project file and the live tools.
   }
@@ -362,11 +368,15 @@ async function loadMcp($: EngineInterface, home: string, cwd: string): Promise<M
     }
   }
   for (const c of configured) if (!rows.has(mcpKey(c.name))) rows.set(mcpKey(c.name), row(mcpKey(c.name), c.name, c.scope, c.type))
-  // Connected servers from elsewhere: claude.ai connectors and plugins.
+  // The claude.ai connectors connected before, even when gone or logged out.
+  for (const name of ever) if (!rows.has(mcpKey(name))) rows.set(mcpKey(name), row(mcpKey(name), name, 'claude.ai', 'http'))
+  // Other connected servers: claude.ai connectors and plugins. One with only
+  // its log-in tools that was never connected is a default: left out.
   for (const key of tools.keys()) {
     if (rows.has(key)) continue
     const name = key.startsWith('claude_ai_') ? `claude.ai ${key.slice(10).replace(/_/g, ' ')}` : key.startsWith('plugin_') ? key.slice(7) : key
-    rows.set(key, row(key, name, key.startsWith('claude_ai_') ? 'claude.ai' : key.startsWith('plugin_') ? 'plugin' : 'other', 'http'))
+    const r = row(key, name, key.startsWith('claude_ai_') ? 'claude.ai' : key.startsWith('plugin_') ? 'plugin' : 'other', 'http')
+    if (r.status === 'connected') rows.set(key, r)
   }
   return [...rows.values()]
 }

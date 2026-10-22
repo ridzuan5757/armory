@@ -409,7 +409,7 @@ test('the git colony reads the session folder repo and the repos below it', asyn
   }, { root: 'lib', name: 'lib', branch: 'dev', upstream: false, ahead: 0, behind: 0, changes: [], commits: [] }])
 })
 
-test('the mcp colony joins the config and the live tools, and keeps secrets out', async ($, on) => {
+test('the mcp colony shows used servers only, and keeps secrets out', async ($, on) => {
   const clock = mock.clock(on)
   const pages: string[] = []
   on('command.register', () => ({ value: { command: 'armory' } }))
@@ -422,6 +422,7 @@ test('the mcp colony joins the config and the live tools, and keeps secrets out'
       return { value: JSON.stringify({
         mcpServers: { lab: { type: 'stdio', command: 'lab', env: { TOKEN: 'SECRET-TOKEN' } }, down: { type: 'http', url: 'https://SECRET-URL' } },
         projects: { '/work': { mcpServers: { local1: { command: 'x', args: ['SECRET-ARG'] } } } },
+        claudeAiMcpEverConnected: ['claude.ai Slack'],
       }) }
     }
     if (e.path === '/work/.mcp.json') return { value: JSON.stringify({ mcpServers: { 'team.docs': { type: 'sse', headers: { Authorization: 'SECRET-HEADER' } } } }) }
@@ -436,6 +437,10 @@ test('the mcp colony joins the config and the live tools, and keeps secrets out'
     { name: 'mcp__lab__stop', description: '', mcp: true },
     { name: 'mcp__team_docs__authenticate', description: '', mcp: true },
     { name: 'mcp__claude_ai_Gmail__create_draft', description: '', mcp: true },
+    // Connected before, logged out now: needs a log-in. Never connected: left out.
+    { name: 'mcp__claude_ai_Slack__authenticate', description: '', mcp: true },
+    { name: 'mcp__claude_ai_Asana__authenticate', description: '', mcp: true },
+    { name: 'mcp__claude_ai_Asana__complete_authentication', description: '', mcp: true },
   ] }))
   on('tool.call', () => ({ result: {} }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
@@ -451,6 +456,7 @@ test('the mcp colony joins the config and the live tools, and keeps secrets out'
     ['down', 'user', 'http', 'off', 0],
     ['local1', 'local', 'stdio', 'off', 0],
     ['team.docs', 'project', 'sse', 'auth', 0],
+    ['claude.ai Slack', 'claude.ai', 'http', 'auth', 0],
     ['claude.ai Gmail', 'claude.ai', 'http', 'connected', 1],
   ])
   expect(mcp[0].used.map((u: { tool: string; uses: number }) => [u.tool, u.uses])).toEqual([['run', 1]])

@@ -30,9 +30,10 @@ Armory has four themes:
   out. A repo with no open work is dim. Armory runs `git status`,
   `git diff --numstat` and `git log`: every 5 s for the repos that hold the
   files Claude uses, and every 30 s (four per update) for the others.
-- **MCP**: the MCP servers from your config (`~/.claude.json` and the
-  session folder's `.mcp.json`) and the ones connected now (claude.ai
-  connectors, plugins). Each server shows its state: connected (teal, with
+- **MCP**: the MCP servers you use: the ones connected now, the ones in
+  your config (`~/.claude.json` and the session folder's `.mcp.json`), and
+  the claude.ai connectors you connected before. Default connectors that you
+  never connected are left out. Each server shows its state: connected (teal, with
   its tool count), needs a log-in (amber) or not connected (red, dim). The
   MCP tools that Claude calls appear under their server and glow. Armory
   reads only each server's name, type and scope from the config, never its
