@@ -66,6 +66,7 @@ test('the pane shows skills, jobs and memory', async ($, on) => {
     if (text === undefined) throw new Error(`ENOENT ${e.path}`)
     return { value: text }
   })
+  on('fs.exists', (_, e) => ({ value: e.path in FILES }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
@@ -296,4 +297,32 @@ test('the sessions colony lists live sessions only, with safe fields', async ($,
     { pid: 5000, id: 's-5000', name: 'work-5000', cwd: '~/work/5000', status: 'idle', since: 1000, self: false },
   ])
   expect(page).not.toContain('sock')
+})
+
+test('the start folder comes from the session file, and no memory is no error', async ($, on) => {
+  const pages: string[] = []
+  const listed: string[] = []
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', (_, e) => {
+    if (e.path === `${HOME}/.claude/sessions/4242.json`) return { value: JSON.stringify({ pid: 4242, cwd: '/work' }) }
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('fs.exists', () => ({ value: false }))
+  on('fs.list', (_, e) => (listed.push(e.path), { value: [] }))
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  // The engine reports the folder a cd moved to; the session file has the start.
+  await $.session.start({ cwd: '/work/armory', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  const page = pages.at(-1) ?? ''
+  const snap = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot
+  expect(listed).toContain('/work')
+  expect(listed).not.toContain('/work/armory')
+  expect(snap.memory).toEqual([])
+  expect(snap.errors).toEqual([])
 })
