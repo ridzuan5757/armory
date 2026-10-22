@@ -77,7 +77,11 @@ export const CARAVAN: Theme = {
   }
   // The view from the data, set by /armory view; G changes it here until
   // the next change of the setting.
+  // A simple world (/armory world simple) has no time, seasons, disasters,
+  // tectonics, volcano cycles or clouds: only the map, colonies and horses.
+  let SIMPLE = false;
   function onData(d) {
+    SIMPLE = d.world === 'simple';
     if (d.view === GLOBE.seen) return;
     GLOBE.seen = d.view;
     GLOBE.on = d.view === 'globe';
@@ -778,6 +782,14 @@ export const CARAVAN: Theme = {
   let hazard = new Map(), hazardKey = '', hazardGen = 0, active = [];
   function updateHazards() {
     if (!tiles.size) return;
+    if (SIMPLE) {
+      active = [];
+      if (hazardKey === 'simple') return;
+      hazardKey = 'simple'; hazardGen++;
+      hazard = new Map();
+      plans.clear();
+      return;
+    }
     const now = worldNow(), { n } = calendar();
     active = [...disastersOf(n - 1), ...disastersOf(n)].filter(d => now >= d.start && now < d.end);
     // A tornado moves east with the westerlies, one tile a step, and ends
@@ -937,6 +949,21 @@ export const CARAVAN: Theme = {
   let terraKey = '', terraGen = 0, changed = new Set(), liveQuakes = [], lastTerra = -Infinity;
   function updateTectonics() {
     if (!tiles.size) return;
+    // A simple world: the land as built, dormant volcanoes, no quakes.
+    if (SIMPLE) {
+      if (terraKey === 'simple') return;
+      for (const k of changed) { const tl = tiles.get(k); tl.terrain = tl.base; tl.land = tl.baseLand; }
+      changed = new Set();
+      liveQuakes = [];
+      volcanoes.forEach(v => { v.state = { stage: 'dormant', r: 0, size: 0.7 }; });
+      rivers = baseRivers.slice();
+      riverSet = new Set(rivers.flat());
+      terraKey = 'simple';
+      terraGen++;
+      plans.clear();
+      hazardKey = '';
+      return;
+    }
     if (!faults.length) buildFaults();
     const now = worldNow();
     if (Math.abs(now - lastTerra) < 1000) return;
@@ -1256,6 +1283,7 @@ export const CARAVAN: Theme = {
   const clouds = CLOUD_LATS.map((lat, i) => ({ lat, x: (hash('cx' + i) * 2 - 1) * OX, r: 2 + 2 * hash('cr' + i) }));
   let cloudT = 0;
   function drawClouds(t) {
+    if (SIMPLE) return;
     const w = OX + TILE * 6, dt = cloudT ? Math.min(0.2, t - cloudT) : 0, cal = calendar(), shift = beltShift();
     cloudT = t;
     if (!calm) {
@@ -1444,6 +1472,7 @@ export const CARAVAN: Theme = {
   // The calendar, at the top right: a year wheel with its four seasons and a
   // hand, the year, and the season and day in the north and the south.
   function drawCalendar() {
+    if (SIMPLE) return;
     const cal = calendar(), x = W - 30, y = TOP + 26, R = 14;
     for (let i = 0; i < 4; i++) {
       pen.fillStyle = rgba(SEASON_COLOR[i], i === cal.season ? 0.9 : 0.35);
@@ -1565,7 +1594,7 @@ export const CARAVAN: Theme = {
       if (city) { pen.fillStyle = rgba(city.color, 0.16 * dim * s.fog); pen.fill(); }
       // The season: snow at high latitudes in winter, orange forests in
       // autumn, greener land in spring, brighter dry land in summer.
-      if (tl.land && tl.terrain !== 'ice') {
+      if (!SIMPLE && tl.land && tl.terrain !== 'ice') {
         const local = seasonAt(tl.lat, cal.season), a = Math.abs(tl.lat);
         const tint = local === 3 && a > 40 ? ['#f2f6fa', Math.min(0.6, 0.2 + (a - 40) / 30)]
           : local === 2 && (tl.terrain === 'forest' || tl.terrain === 'grass') ? ['#d0782a', 0.35]
@@ -1629,7 +1658,7 @@ export const CARAVAN: Theme = {
   }
   function mapKey(fc) {
     const q = p => Math.round(p.x * 4) + ':' + Math.round(p.y * 4);
-    return [q(screenRaw(-OX, -OY, 0)), q(screenRaw(OX, -OY, 0)), q(screenRaw(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n, terraGen,
+    return [q(screenRaw(-OX, -OY, 0)), q(screenRaw(OX, -OY, 0)), q(screenRaw(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', SIMPLE ? 'simple' : calendar().n, terraGen,
       GLOBE.on ? 'globe ' + Math.round((cam.x + view.px) * 2) + ' ' + Math.round((cam.y + view.py) * 2) + ' ' + Math.round(globeRadius() * 2) : 'flat'].join(' ');
   }
 

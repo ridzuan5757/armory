@@ -247,6 +247,11 @@ test('/armory theme saves the theme and rewrites the page for it', async ($, on)
   expect(await run('view globe')).toBe('Armory view: globe.')
   expect(writes.get('data.js')).toContain('"view":"globe"')
   expect(await run('view')).toMatch(/View: globe\./)
+
+  // The caravan world: full by default, simple by the command, in the data.
+  expect(await run('world')).toMatch(/World: full\. Worlds: full, simple/)
+  expect(await run('world simple')).toBe('Armory world: simple.')
+  expect(writes.get('data.js')).toContain('"world":"simple"')
 })
 
 test('skill use counts come from grep | uniq, so history.jsonl may pass 4 MiB', async ($, on) => {

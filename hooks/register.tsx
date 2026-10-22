@@ -643,7 +643,7 @@ async function refresh($: EngineInterface) {
 
 // The web page and the last Raster size live only in this process; a reload
 // starts them over, and /armory web turns the page on again.
-const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME, view: 'flat', page: '' }
+const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME, view: 'flat', world: 'full', page: '' }
 let mounted: { columns: number; rows: number; tab: Tab } | undefined
 
 async function writeData($: EngineInterface, snap: Snapshot, pollMs: number) {
@@ -651,7 +651,7 @@ async function writeData($: EngineInterface, snap: Snapshot, pollMs: number) {
   // on disk must be the current one first, or it would reload without end.
   if (web.page !== buildOf(web.theme)) await writePage($)
   web.seq++
-  await $.fs.write(`${web.dir}/data.js`, dataScript(snap, web.seq, pollMs, web.theme, web.view))
+  await $.fs.write(`${web.dir}/data.js`, dataScript(snap, web.seq, pollMs, web.theme, web.view, web.world))
 }
 
 // Each session has its own folder for the page and its data, named like the
@@ -673,6 +673,7 @@ async function openWeb($: EngineInterface, isFallbackOk = true) {
   web.dir = dir
   web.theme = await themeOf($)
   web.view = await viewOf($)
+  web.world = await worldOf($)
   await writePage($)
   web.isOn = true
   await writeData($, await read($, snapshot), 1000)
@@ -739,6 +740,25 @@ async function setView($: EngineInterface, name: string) {
   if (web.isOn) await writeData($, await read($, snapshot), 1000)
 
   return `Armory view: ${name}.`
+}
+
+// The world of a map theme (caravan): full (time, seasons, disasters,
+// tectonics, volcano cycles, clouds) or simple (none of them). Kept for new
+// sessions; the page reads it from the data.
+const WORLDS = ['full', 'simple']
+async function worldOf($: EngineInterface) {
+  const saved = await $.store.get('world').catch(() => undefined)
+
+  return typeof saved === 'string' && WORLDS.includes(saved) ? saved : 'full'
+}
+async function setWorld($: EngineInterface, name: string) {
+  if (!name) return `World: ${await worldOf($)}. Worlds: ${WORLDS.join(', ')} (caravan). Change it with /armory world <name>.`
+  if (!WORLDS.includes(name)) return `No world named ${name}. Worlds: ${WORLDS.join(', ')}.`
+  await $.store.set('world', name)
+  web.world = name
+  if (web.isOn) await writeData($, await read($, snapshot), 1000)
+
+  return `Armory world: ${name}.`
 }
 
 // Saves the theme and rewrites the page. An open split sees the new theme
@@ -954,6 +974,7 @@ export const register: Register = on => {
     if (verb === 'results') return { text: await results($) }
     if (verb === 'theme') return { text: await setTheme($, e.args.trim().split(/\s+/)[1] ?? '') }
     if (verb === 'view') return { text: await setView($, e.args.trim().split(/\s+/)[1] ?? '') }
+    if (verb === 'world') return { text: await setWorld($, e.args.trim().split(/\s+/)[1] ?? '') }
     if (verb === 'close') {
       await closeWeb($)
       web.isOn = false

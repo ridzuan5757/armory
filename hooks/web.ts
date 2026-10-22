@@ -954,5 +954,5 @@ const SHARED_B = `
   poll();
 `
 
-export const dataScript = (snapshot: Snapshot, seq: number, pollMs: number, theme: string, view = 'flat') =>
-  `window.armoryData(${JSON.stringify({ seq, pollMs, theme, view, build: buildOf(theme), snapshot })})\n`
+export const dataScript = (snapshot: Snapshot, seq: number, pollMs: number, theme: string, view = 'flat', world = 'full') =>
+  `window.armoryData(${JSON.stringify({ seq, pollMs, theme, view, world, build: buildOf(theme), snapshot })})\n`

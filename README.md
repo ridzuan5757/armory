@@ -89,6 +89,7 @@ Then start a new session, or run `/reload-plugins`.
 | `/armory theme <name>` | Changes the theme. The choice is kept for new sessions. |
 | `/armory view` | Shows the caravan view (flat or globe). |
 | `/armory view <flat\|globe>` | Shows caravan as a flat map or a turning globe. The choice is kept for new sessions; `G` in the split also switches. |
+| `/armory world <full\|simple>` | `simple` turns off the caravan time, seasons, disasters, tectonics, volcano cycles and clouds: only the map, colonies and horses stay (lighter). Kept for new sessions. |
 | `/armory close` | Closes the split. |
 | `/armory` | Opens the text pane in the terminal. |
 | `/armory stress <hz> <seconds> <raster\|web\|both>` | Runs a speed test. |
