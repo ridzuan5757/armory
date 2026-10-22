@@ -285,7 +285,7 @@ const SHARED_A = `
     if (!target && grown) { target = grown.id; why = 'grew · ' + grown.label; }
     if (!target) {
       const gone = [...nodes.values()].find(n => n.dying === now && n.kind === 'leaf');
-      const up = gone && [...edges.values()].find(e => e.b === gone.id);
+      const up = gone && [...edges.values()].find(e => e.b === gone.id && !e.link);
       if (up) { target = up.a; why = 'removed · ' + gone.label; }
     }
     if (!target || performance.now() - view.idle < HANDS_OFF_MS) return;
@@ -318,6 +318,19 @@ const SHARED_A = `
     node('hub:sessions', { kind: 'hub', label: 'SESSIONS ' + busy + '/' + sessions.length, color: HUB.sessions, r: 9 }, '', 0);
     edge('hub:sessions', 'hub:jobs', { w: 2, rest: 400, k: 0 }, 0);
     edge('hub:sessions', 'hub:memory', { w: 2, rest: 400, k: 0 }, 0);
+    // Links between jobs and sessions: a job and its own running session
+    // (exact, solid), and a job that is not done and the sessions that work
+    // in the same folder (dashed). The data does not say which session
+    // started a job, so no link claims that.
+    for (const j of s.jobs) {
+      for (const x of sessions) {
+        const own = j.session && j.session === x.id;
+        const folder = !own && j.state !== 'done' && j.cwd && j.cwd === x.cwd;
+        if (!own && !folder) continue;
+        edge('job:' + j.id, 'session:' + x.pid, { w: own ? 1.6 : 0.8, rest: own ? 120 : 170, k: own ? 0.01 : 0.004,
+          link: true, rel: own ? 'own' : 'folder', solid: own, color: HUB.sessions }, step * 900);
+      }
+    }
     // One node per running session; a busy one pulses.
     branch('hub:sessions', HUB.sessions, sessions.map(x => ({
       id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
@@ -467,8 +480,16 @@ const SHARED_B = `
       return '<div class="k">session · ' + esc(d.status) + (d.self ? ' · this one' : '') + '</div><div class="n">' + esc(d.name) +
         '</div><div class="d">' + esc(d.cwd) + '<br>' + esc(d.status) + ' for ' + ago + ' · pid ' + d.pid + '</div>';
     }
-    if (n.type === 'job') return '<div class="k">job · ' + esc(d.state) + '</div><div class="n">' + esc(d.name) +
-      '</div>' + (d.detail ? '<div class="d">' + esc(d.detail) + '</div>' : '');
+    if (n.type === 'job') {
+      const rel = kind => [...edges.values()].filter(e => e.a === n.id && e.rel === kind && !e.dying)
+        .map(e => nodes.get(e.b)).filter(Boolean).map(s => esc(s.data.name));
+      const own = rel('own'), folder = rel('folder');
+      return '<div class="k">job · ' + esc(d.state) + '</div><div class="n">' + esc(d.name) + '</div>' +
+        (d.detail ? '<div class="d">' + esc(d.detail) + '</div>' : '') +
+        (d.cwd ? '<div class="d">' + esc(d.cwd) + '</div>' : '') +
+        (own.length ? '<div class="d">own session: ' + own.join(', ') + '</div>' : '') +
+        (folder.length ? '<div class="d">same folder: ' + folder.join(', ') + '</div>' : '');
+    }
     return '<div class="k">memory · ' + esc(d.group) + '</div><div class="n">' + esc(d.title) +
       '</div><div class="d">↓' + d.in + ' inbound · ↑' + d.out + ' outbound</div>';
   }

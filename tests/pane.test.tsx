@@ -326,3 +326,31 @@ test('the start folder comes from the session file, and no memory is no error', 
   expect(snap.memory).toEqual([])
   expect(snap.errors).toEqual([])
 })
+
+test('jobs send their session and folder, and nothing else from the job file', async ($, on) => {
+  const pages: string[] = []
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.list', (_, e) => ({
+    value: e.path === `${HOME}/.claude/jobs` ? [{ name: 'j9', kind: 'dir', size: 0, mtimeMs: 0, isLink: false }] : [],
+  }))
+  on('fs.read', (_, e) => {
+    if (e.path.endsWith('/j9/state.json')) {
+      return { value: JSON.stringify({ state: 'running', intent: 'build', sessionId: 'job-session', cwd: `${HOME}/work`, output: 'SECRET-OUTPUT', providerEnv: { KEY: 'SECRET-KEY' } }) }
+    }
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  const page = pages.at(-1) ?? ''
+  const jobs = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot.jobs
+  expect(jobs).toEqual([{ id: 'j9', name: 'build', state: 'running', detail: '', session: 'job-session', cwd: '~/work' }])
+  expect(page).not.toContain('SECRET')
+})

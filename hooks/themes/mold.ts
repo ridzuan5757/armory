@@ -182,7 +182,7 @@ export const MOLD: Theme = {
       const p01x = c.x0 + (c.cx - c.x0) * g, p01y = c.y0 + (c.cy - c.y0) * g;
       const end = at(c, g);
       const lit = !hover || (near.has(e.a) && near.has(e.b));
-      const color = e.link ? '#cfe0ff' : b.color;
+      const color = e.link ? e.color || '#cfe0ff' : b.color;
       const fade = (b.dim ? 0.45 : 1) * (lit ? 1 : 0.25) * (inFocus(a) && inFocus(b) ? 1 : 0.3) * (a.fog + b.fog) / 2;
       const swell = pulseAt(e.b, t);
       const w = e.w * (a.sf + b.sf) / 2 * (1 + 0.8 * swell);
@@ -194,7 +194,7 @@ export const MOLD: Theme = {
       ctx.stroke();
       ctx.strokeStyle = rgba(color, Math.min(1, (e.link ? 0.35 : 0.55) + 0.35 * swell) * fade);
       ctx.lineWidth = w;
-      if (e.link) ctx.setLineDash([3, 4]);
+      if (e.link && !e.solid) ctx.setLineDash([3, 4]);
       ctx.stroke();
       ctx.setLineDash([]);
       // A vein to a used file glows in the color of the use.
