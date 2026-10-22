@@ -106,7 +106,9 @@ after you move the map, events only name themselves at the top. Home or 0
 shows the whole map again. Put the pointer on a volcano, a disaster or an
 earthquake to see its name, cost and time left. In the globe view the same
 world wraps on a sphere: drag to turn it, pinch to zoom; an event turns its
-colony to the front, and the globe turns slowly for a few minutes after it.
+colony to the front, and the globe turns slowly for a few minutes after it. To stay
+light, the map draws at most 10 frames a second at rest, and after 30 s with
+no input and no event it sleeps at 1 frame a second until something happens.
 
 ## Links beside the chat (optional, macOS)
 

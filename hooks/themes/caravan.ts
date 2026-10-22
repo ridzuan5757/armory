@@ -57,6 +57,7 @@ export const CARAVAN: Theme = {
   // canvas skips what is drawn at NaN. G in the split, or /armory view,
   // switches between the views.
   const GLOBE = { on: false, seen: '' }, globeStart = performance.now();
+  let globeTurning = false;
   const latAt = y => 80 - ((y + OY) / (TILE * 1.5) + 0.5) * DEG;
   function globeRadius() {
     const base = Math.min(W - 2 * SIDE, H - TOP - BOTTOM) / 2 * 0.92;
@@ -82,6 +83,11 @@ export const CARAVAN: Theme = {
     GLOBE.on = d.view === 'globe';
   }
   addEventListener('keydown', ev => { if (ev.key === 'g' || ev.key === 'G') GLOBE.on = !GLOBE.on; });
+  // What keeps the map awake (full frame rate) when the engine would let it
+  // sleep: flashing border changes, a swarm, a live earthquake, a turning globe.
+  function MAP_AWAKE() {
+    return changes.size > 0 || swarm.on || liveQuakes.length > 0 || globeTurning;
+  }
   const unkey = k => k.split(',').map(Number);
   const canon = cell => unkey(tkey(...cell));
   function ringAround(q, r, k) {
@@ -993,9 +999,8 @@ export const CARAVAN: Theme = {
     alpha *= 0.988;
     // The globe turns slowly (4 degrees a second) 20 s after the last input,
     // for three minutes after the last event or the page load; then it stops.
-    if (GLOBE.on && !calm && !focus && now - view.idle > 20000 && now - Math.max(stay ? stay.since : 0, globeStart) < 180000) {
-      view.px = wrapDelta(view.px + dt * WW / 360 * 4);
-    }
+    globeTurning = GLOBE.on && !calm && !focus && now - view.idle > 20000 && now - Math.max(stay ? stay.since : 0, globeStart) < 180000;
+    if (globeTurning) view.px = wrapDelta(view.px + dt * WW / 360 * 4);
     rest = !calm && view.auto > 0 ? Math.min(1, rest + 0.01) : Math.max(0, rest - 0.05);
     for (const n of nodes.values()) {
       const o = owner.get(n.id);

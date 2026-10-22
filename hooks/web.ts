@@ -147,9 +147,11 @@ const SHARED_A = `
   const canvas = document.getElementById('net');
   const ctx = canvas.getContext('2d');
   const tip = document.getElementById('tip');
-  let W = 0, H = 0, dpr = 1;
+  // A map caps the pixel density (dprCap, set with MAP below): each frame's
+  // pixels travel to the terminal, so fewer pixels cost less.
+  let W = 0, H = 0, dpr = 1, dprCap = 4;
   function resize() {
-    dpr = window.devicePixelRatio || 1;
+    dpr = Math.min(window.devicePixelRatio || 1, dprCap);
     W = innerWidth; H = innerHeight;
     canvas.width = W * dpr; canvas.height = H * dpr;
   }
@@ -161,9 +163,10 @@ const SHARED_A = `
   const nodes = new Map(), edges = new Map();
   let alpha = 1, gen = 0, firstLoad = true;
   // Focus: after an event, the camera goes to the colony where it happened.
-  let focus, note, stay, fresh = [], lastFileAt = 0;
+  // lastEvent: the last event that focused the camera or named itself.
+  let focus, note, stay, fresh = [], lastFileAt = 0, lastEvent = -Infinity;
   const jobStates = new Map(), sessionStates = new Map();
-  const FOCUS_MS = 6000, HANDS_OFF_MS = 8000, MAP_HOLD_MS = 30000;
+  const FOCUS_MS = 6000, HANDS_OFF_MS = 8000, MAP_HOLD_MS = 30000, SLEEP_MS = 30000;
   const cam = { x: 0, y: 0, z: 0, s: 1, r: 300 };
 
   function node(id, props, parent, delay) {
@@ -333,6 +336,7 @@ const SHARED_A = `
     const colonyOf = id => { const n = nodes.get(id); return n && (n.kind === 'hub' ? n.id : n.colony); };
     const held = t - view.idle < (MAP ? MAP_HOLD_MS : HANDS_OFF_MS);
     const busy = MAP && focus && t < focus.since + FOCUS_MS && colonyOf(focus.id) !== colonyOf(target);
+    lastEvent = t;
     if (held || busy) {
       if (MAP) note = { why, until: t + FOCUS_MS };
       return;
@@ -590,7 +594,7 @@ const SHARED_B = `
   const view = { yaw: 0.3, pitch: 0.2, vyaw: 0, vpitch: 0, zoom: 1, idle: 0, auto: 0, px: 0, py: 0, vpx: 0, vpy: 0 };
   const MAP = typeof MAP_VIEW === 'undefined' ? undefined : MAP_VIEW;
   // A map starts with no recent input, so the first events move the camera.
-  if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; view.idle = -MAP_HOLD_MS; }
+  if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; view.idle = -MAP_HOLD_MS; dprCap = 1.5; resize(); }
   const DIST = 1600, TOP = 56, BOTTOM = 44, SIDE = 24;
   // With a focus, only the colony of the focus counts, and the center moves
   // halfway to the node itself. The camera eases there and back.
@@ -867,11 +871,15 @@ const SHARED_B = `
     // terminal and the window server, so frames cost far more than drawing.
     // A map has no layout to settle and no turn at rest: only input, a
     // glide, a focus and fresh data make it busy; at rest it draws 10 frames
-    // a second. A hidden page draws none.
+    // a second. A hidden page draws none. After SLEEP_MS with no input and
+    // no event (and nothing the theme keeps awake, MAP_AWAKE), a map sleeps:
+    // one frame a second, and one at each new data.
     if (document.hidden) return;
-    const busy = (!MAP && (alpha > 0.004 || view.auto > 0)) || drag || turn || spin || Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 ||
-      focus || now - lastData < (MAP ? 500 : 1500);
-    if (now - last < (busy ? 33 : calm ? 1000 : MAP ? 100 : 66)) return;
+    const busy = (!MAP && (alpha > 0.004 || view.auto > 0 || now - lastData < 1500)) || drag || turn || spin ||
+      Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || focus;
+    const asleep = MAP && !busy && now - view.idle > SLEEP_MS && now - lastEvent > SLEEP_MS && !(typeof MAP_AWAKE === 'function' && MAP_AWAKE());
+    const wait = busy ? 33 : calm ? 1000 : asleep ? (lastData > last ? 0 : 1000) : MAP ? 100 : 66;
+    if (now - last < wait) return;
     last = now;
     if (view.auto > 0 && !MAP) {
       if (AUTO_TURN) view.yaw += 0.0035 * view.auto;
