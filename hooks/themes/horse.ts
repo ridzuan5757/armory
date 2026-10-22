@@ -179,7 +179,7 @@ export const HORSE_KIT = `
   // Body size from data, as in hive: a log scale against the largest of the
   // same kind in the colony.
   function bodySizes() {
-    const valueOf = n => n.type === 'skill' ? n.data.uses : (n.type === 'memory' || n.type === 'file') ? (n.data.size || 0) : -1;
+    const valueOf = n => n.type === 'skill' ? n.data.uses : n.type === 'change' ? n.data.add + n.data.del : (n.type === 'memory' || n.type === 'file') ? (n.data.size || 0) : -1;
     const top = new Map();
     for (const n of nodes.values()) {
       const v = valueOf(n);

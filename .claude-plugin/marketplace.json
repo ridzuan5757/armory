@@ -8,8 +8,8 @@
     {
       "name": "armory",
       "source": "./",
-      "description": "Live 3D dashboard for skills, jobs, memory and the files tools use, with mold, orbit, hive and caravan themes",
-      "version": "0.28.0"
+      "description": "Live 3D dashboard for skills, jobs, memory and the files tools use and git, with mold, orbit, hive and caravan themes",
+      "version": "0.30.0"
     }
   ]
 }

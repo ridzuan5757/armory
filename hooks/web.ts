@@ -106,6 +106,7 @@ const HEAD = `<!doctype html>
   <span><i style="background:#7aa2ff"></i>memory</span>
   <span><i style="background:#e8ecd8"></i>files</span>
   <span><i style="background:#e0a3ff"></i>sessions</span>
+  <span><i style="background:#f0643c"></i>git</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -114,7 +115,8 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff' };
+  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c' };
+  const CHANGE = { M: '#ff9a4d', A: '#5fd38d', '?': '#5fd38d', D: '#ff6b6b', R: '#7fd8ff' };
   const SESSION = { busy: '#ffcc66', idle: '#7fd8a6', shell: '#7fb2ff' };
   const OP = { read: '#7fd8ff', write: '#ff9a4d', new: '#5fd38d' };
   const GLOW_MS = 30000;
@@ -354,6 +356,42 @@ const SHARED_A = `
           link: true, rel: own ? 'own' : 'folder', solid: own, color: HUB.sessions }, step * 900);
       }
     }
+    // The GIT colony: one group per repo, with its changed files and the
+    // commits not pushed. A changed file that is also on the FILES hub gets
+    // a solid link to it: the same path, seen from both sides.
+    const repos = s.git || [];
+    const changed = repos.reduce((sum, r) => sum + r.changes.length, 0);
+    const ahead = repos.reduce((sum, r) => sum + r.commits.length, 0);
+    node('hub:git', { kind: 'hub', label: 'GIT ' + changed + '\u0394' + (ahead ? ' \u2191' + ahead : ''), color: HUB.git, r: 9 }, '', 0);
+    edge('hub:git', 'hub:files', { w: 2.4, rest: 400, k: 0 }, 0);
+    edge('hub:git', 'hub:skills', { w: 2, rest: 400, k: 0 }, 0);
+    const onFiles = new Map((s.files || []).map(f => [f.path, f]));
+    repos.forEach((r, i) => {
+      const id = 'repo:' + r.root;
+      // The share of the repo's open changes that this session made.
+      const mine = r.changes.filter(c => (onFiles.get(c.file) || {}).at > 0).length;
+      node(id, { kind: 'group', type: 'repo', data: Object.assign({ mine }, r), label: r.name + ' \u2387 ' + r.branch,
+        color: HUB.git, r: 5.5, dim: !r.changes.length && !r.commits.length }, 'hub:git', step * (250 + i * 60));
+      edge('hub:git', id, { w: 1.4 + Math.min(2.4, r.changes.length / 6), rest: 70, k: 0.08 }, step * (100 + i * 60));
+      branch(id, HUB.git, [
+        ...r.changes.map(c => ({
+          id: 'change:' + r.root + '/' + c.path, w: 0.8 + Math.min(1.6, Math.log1p(c.add + c.del) / 3), rest: 24,
+          props: { type: 'change', data: Object.assign({ repo: r.name }, c), label: c.path.slice(c.path.lastIndexOf('/') + 1),
+            color: CHANGE[c.state] || CHANGE.M, r: 2.6 + Math.min(3.5, Math.log1p(c.add + c.del) / 2), showLabel: false },
+        })),
+        ...r.commits.map((c, j) => ({
+          id: 'commit:' + r.root + '/' + c.hash, w: 1.6, rest: 30,
+          props: { type: 'commit', data: Object.assign({ repo: r.name }, c), label: c.subject, color: '#f2c230',
+            r: 4.2, showLabel: j === 0 },
+        })),
+      ], 450 + i * 60, step);
+      for (const c of r.changes) {
+        if (!onFiles.has(c.file)) continue;
+        edge('change:' + r.root + '/' + c.path, 'file:' + c.file, { w: 0.8, rest: 160, k: 0.004,
+          link: true, rel: 'same', solid: true, color: HUB.git }, step * 900);
+      }
+    });
+
     // One node per running session; a busy one pulses.
     branch('hub:sessions', HUB.sessions, sessions.map(x => ({
       id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
@@ -495,6 +533,20 @@ const SHARED_B = `
   function describe(n) {
     const d = n.data;
     if (n.kind === 'hub') return '<div class="k">hub</div><div class="n">' + esc(n.label) + '</div>';
+    if (n.type === 'repo') {
+      const share = d.changes.length ? Math.round(100 * d.mine / d.changes.length) : 0;
+      return '<div class="k">repo \u00b7 ' + esc(d.branch) + '</div><div class="n">' + esc(d.root) + '</div>' +
+        '<div class="d">' + d.changes.length + ' changes not committed' + (d.changes.length ? ' \u00b7 ' + d.mine + ' (' + share + ' %) from this session' : '') + '</div>' +
+        '<div class="d">' + (d.upstream ? '\u2191' + d.ahead + ' \u2193' + d.behind + ' against upstream' : 'no upstream') + '</div>';
+    }
+    if (n.type === 'change') {
+      const what = { M: 'changed', A: 'added', D: 'deleted', R: 'renamed', '?': 'untracked' }[d.state] || d.state;
+      return '<div class="k">change \u00b7 ' + esc(what) + ' \u00b7 ' + esc(d.repo) + '</div><div class="n">' + esc(d.path) + '</div>' +
+        '<div class="d">+' + d.add + ' \u2212' + d.del + ' lines</div>';
+    }
+    if (n.type === 'commit') {
+      return '<div class="k">commit not pushed \u00b7 ' + esc(d.repo) + '</div><div class="n">' + esc(d.subject) + '</div><div class="d">' + esc(d.hash) + '</div>';
+    }
     if (n.kind === 'group') return '<div class="k">memory group</div><div class="n">' + esc(n.label) + '</div>';
     if (n.type === 'skill') return '<div class="k">skill · ' + esc(d.source) + '</div><div class="n">/' + esc(d.name) +
       '</div><div class="d">' + d.uses + ' uses' + (d.model !== '-' ? ' · model ' + esc(d.model) : '') + '</div>';

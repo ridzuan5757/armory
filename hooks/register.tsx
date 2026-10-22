@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileOp, FileRow, JobRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch } from '../types'
+import type { FileOp, FileRow, GitRepo, JobRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch } from '../types'
 
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
@@ -10,7 +10,7 @@ import { DEFAULT_THEME, THEMES, buildOf, dataScript, pageOf } from './web'
 
 const PANE = 'armory'
 const TITLE = 'Armory'
-const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], loadedAt: 0, errors: [] }
+const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], loadedAt: 0, errors: [] }
 
 const tab = atom({ plugin: 'armory', key: 'tab' } as const, 'skills' as Tab)
 const snapshot = atom({ plugin: 'armory', key: 'snapshot' } as const, EMPTY)
@@ -207,6 +207,110 @@ async function loadFiles($: EngineInterface, home: string, cwd: string): Promise
   return [...rows.values()]
 }
 
+// The GIT colony: the repo that holds the session folder, the repos in the
+// folders one level below it, and the repos that hold the files this
+// session used; forty at most. One shell run per repo gives the branch line,
+// the changes, their line counts and the commits not pushed. A repo that
+// holds a used file is read at each load; the others when their last read is
+// older than STALE_MS, a few per load, so a large folder costs little.
+const GIT = `cd "$1" || exit 1
+git status --porcelain=v1 -b -uall 2>/dev/null | head -121
+echo @@
+git diff --numstat HEAD 2>/dev/null | head -300
+echo @@
+git log --format='%h %s' '@{u}..' 2>/dev/null | head -20`
+const MAX_REPOS = 40
+const MAX_CHANGES = 60
+const STALE_MS = 30000
+const STALE_PER_LOAD = 4
+const repoOf = new Map<string, string>()
+const gitCache = new Map<string, { at: number; repo: GitRepo | undefined }>()
+let scan = { at: 0, cwd: '', roots: [] as string[] }
+
+async function gitRoot($: EngineInterface, dir: string) {
+  const known = repoOf.get(dir)
+  if (known !== undefined) return known
+  const out = await $.process.run(['git', '-C', dir, 'rev-parse', '--show-toplevel'], { timeoutMs: 3000 }).catch(() => undefined)
+  const root = out && out.exitCode === 0 ? out.stdout.trim() : ''
+  repoOf.set(dir, root)
+  return root
+}
+
+// The repo that holds the session folder, and the repos one level below it
+// (by a .git entry); the scan runs again after STALE_MS.
+async function scanRepos($: EngineInterface, cwd: string) {
+  if (scan.cwd === cwd && Date.now() - scan.at < STALE_MS) return scan.roots
+  const roots: string[] = []
+  const own = await gitRoot($, cwd)
+  if (own) roots.push(own)
+  const entries = await $.fs.list(cwd).catch(() => [])
+  for (const e of entries) {
+    if (e.kind !== 'dir' || e.name.startsWith('.') || HIDDEN.has(e.name)) continue
+    const dir = `${cwd}/${e.name}`
+    if (!roots.includes(dir) && (await $.fs.exists(`${dir}/.git`).catch(() => false))) roots.push(dir)
+  }
+  scan = { at: Date.now(), cwd, roots }
+  return roots
+}
+
+async function loadGit($: EngineInterface, home: string, cwd: string): Promise<GitRepo[]> {
+  const touched = await read($, touchedAtom)
+  const dirs = [...new Set(Object.entries(touched).sort((a, b) => b[1].at - a[1].at).map(([path]) => dirname(path)))]
+  const hot: string[] = []
+  for (const dir of dirs) {
+    if (hot.length >= MAX_REPOS) break
+    const root = await gitRoot($, dir)
+    if (root && !hot.includes(root)) hot.push(root)
+  }
+  const roots = [...hot, ...(await scanRepos($, cwd)).filter(r => !hot.includes(r))].slice(0, MAX_REPOS)
+  const now = Date.now()
+  // A repo never read is read now; of the others, the oldest few.
+  const cold = roots.filter(r => !hot.includes(r))
+  const never = cold.filter(r => !gitCache.has(r))
+  const stale = cold.filter(r => gitCache.has(r) && now - gitCache.get(r)!.at > STALE_MS)
+    .sort((a, b) => gitCache.get(a)!.at - gitCache.get(b)!.at).slice(0, STALE_PER_LOAD)
+  await Promise.all([...hot, ...never, ...stale].map(async root => {
+    const out = await $.process.run(['sh', '-c', GIT, 'git', root], { timeoutMs: 5000 }).catch(() => undefined)
+    const repo = out && out.exitCode === 0 ? parseGit(out.stdout, root, path => shown(path, cwd, home)) : undefined
+    gitCache.set(root, { at: now, repo })
+  }))
+  return roots.flatMap(root => {
+    const repo = gitCache.get(root)?.repo
+    return repo ? [repo] : []
+  })
+}
+
+export function parseGit(text: string, root: string, show: (path: string) => string): GitRepo {
+  const [status = '', numstat = '', log = ''] = text.split(/^@@$/m)
+  const lines = status.split('\n').filter(Boolean)
+  const head = lines[0]?.startsWith('## ') ? lines.shift()!.slice(3) : ''
+  // "main...origin/main [ahead 2, behind 1]", "No commits yet on main", "HEAD (no branch)".
+  const branch = /^No commits yet on (.+)$/.exec(head)?.[1] ?? head.split('...')[0]?.split(' ')[0] ?? ''
+  const counts = new Map<string, { add: number; del: number }>()
+  for (const line of numstat.split('\n')) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(line)
+    if (m?.[3]) counts.set(m[3], { add: m[1] === '-' ? 0 : Number(m[1]), del: m[2] === '-' ? 0 : Number(m[2]) })
+  }
+  const changes = lines.slice(0, MAX_CHANGES).map(line => {
+    const xy = line.slice(0, 2)
+    const path = line.slice(3).split(' -> ').pop() ?? ''
+    const state = xy === '??' ? '?' : (xy.replace(/ /g, '')[0] ?? 'M')
+    const c = counts.get(path) ?? { add: 0, del: 0 }
+    return { path, file: show(`${root}/${path}`), state, add: c.add, del: c.del }
+  })
+  const commits = log.split('\n').filter(Boolean).map(line => ({ hash: line.slice(0, line.indexOf(' ')), subject: line.slice(line.indexOf(' ') + 1) }))
+  return {
+    root: show(root),
+    name: basename(root),
+    branch,
+    upstream: head.includes('...'),
+    ahead: Number(/ahead (\d+)/.exec(head)?.[1] ?? 0),
+    behind: Number(/behind (\d+)/.exec(head)?.[1] ?? 0),
+    changes,
+    commits,
+  }
+}
+
 // Passes a tool's result on and, when the call ran without error, lights its
 // file. A refused or failed call lights nothing.
 function lit<R extends { deny?: string; isError?: boolean }>($: EngineInterface, ran: R, path: unknown, op: FileOp) {
@@ -254,15 +358,19 @@ async function loadSessions($: EngineInterface, home: string): Promise<SessionRo
     .sort((a, b) => a.pid - b.pid)
 }
 
-// Other sessions change while this one is idle, so a timer checks them and
-// writes the page data only when something changed.
+// Other sessions and git change while this one is idle (a commit runs in
+// Bash, which lights no file), so a timer checks them and writes the page
+// data only when something changed.
 let sessionTimer: { cancel: () => void } | undefined
 async function checkSessions($: EngineInterface) {
   const home = (await $.env.get('HOME')) ?? ''
-  const sessions = await loadSessions($, home)
+  const cwd = await read($, cwdAtom)
+  const [sessions, git] = await Promise.all([loadSessions($, home), loadGit($, home, cwd).catch(() => undefined)])
   const before = await read($, snapshot)
-  if (JSON.stringify(before.sessions) === JSON.stringify(sessions)) return
-  const next = await update($, snapshot, s => ({ ...s, sessions }))
+  const same = JSON.stringify(before.sessions) === JSON.stringify(sessions)
+  const sameGit = !git || JSON.stringify(before.git) === JSON.stringify(git)
+  if (same && sameGit) return
+  const next = await update($, snapshot, s => ({ ...s, sessions, git: git ?? s.git }))
   if (web.isOn) await writeData($, next, 1000)
 }
 
@@ -278,8 +386,8 @@ async function touch($: EngineInterface, path: string, op: FileOp) {
   await $.clock.sleep(300)
   filesPending = false
   const home = (await $.env.get('HOME')) ?? ''
-  const files = await loadFiles($, home, cwd)
-  const next = await update($, snapshot, s => ({ ...s, files }))
+  const [files, git] = await Promise.all([loadFiles($, home, cwd), loadGit($, home, cwd).catch(() => undefined)])
+  const next = await update($, snapshot, s => ({ ...s, files, git: git ?? s.git }))
   if (web.isOn) await writeData($, next, 1000)
 }
 
@@ -301,14 +409,15 @@ async function refresh($: EngineInterface) {
   const home = (await $.env.get('HOME')) ?? ''
   const cwd = await read($, cwdAtom)
   const errors: string[] = []
-  const [skills, jobs, memory, files, sessions] = await Promise.all([
+  const [skills, jobs, memory, files, sessions, git] = await Promise.all([
     loadSkills($, home, errors).catch(err => (errors.push(`skills: ${String(err)}`), [])),
     loadJobs($, home, errors),
     loadMemory($, home, cwd, errors),
     loadFiles($, home, cwd).catch(err => (errors.push(`files: ${String(err)}`), [])),
     loadSessions($, home).catch(err => (errors.push(`sessions: ${String(err)}`), [])),
+    loadGit($, home, cwd).catch(err => (errors.push(`git: ${String(err)}`), [])),
   ])
-  const next = { skills, jobs, memory, files, sessions, loadedAt: Date.now(), errors }
+  const next = { skills, jobs, memory, files, sessions, git, loadedAt: Date.now(), errors }
   await update($, snapshot, () => next)
   if (web.isOn) await writeData($, next, 1000)
 }

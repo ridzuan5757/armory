@@ -20,6 +20,16 @@ Armory has four themes:
 - **Memory**: the entries in your project memory, by group, with `[[links]]`.
 - **Sessions**: every Claude Code session that runs on this computer, with
   its status (busy, idle, shell). A busy session pulses.
+- **Git**: every repo in the session folder (the folder itself and the
+  folders one level below it), and the repos that hold the files Claude
+  works on; forty at most. Each repo shows its branch, the files that are
+  changed and not committed (size by changed lines), and the commits not
+  pushed. A changed file that is also on FILES has a solid link to it, and
+  the repo's details show how many of its changes this session made. A
+  commit moves the changes out and a commit in; a push moves the commits
+  out. A repo with no open work is dim. Armory runs `git status`,
+  `git diff --numstat` and `git log`: every 5 s for the repos that hold the
+  files Claude uses, and every 30 s (four per update) for the others.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and

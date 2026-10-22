@@ -13,7 +13,7 @@ export const HIVE: Theme = {
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false;
 
   // Where each queen cell sits, as an angle out from the middle of the hive.
-  const ANGLE = { 'hub:skills': -90, 'hub:files': -18, 'hub:jobs': 54, 'hub:memory': 126, 'hub:sessions': 198 };
+  const ANGLE = { 'hub:skills': -90, 'hub:files': -30, 'hub:git': 30, 'hub:jobs': 90, 'hub:memory': 150, 'hub:sessions': 210 };
   function anchor(id) {
     const c = cells.get(id);
     return c ? cellCenter(c) : { x: 0, y: 0, z: 0 };
@@ -105,7 +105,7 @@ export const HIVE: Theme = {
     }
     // Body sizes: each cell's body grows with its data, on a log scale
     // against the largest of its kind in its colony.
-    const valueOf = n => n.type === 'skill' ? n.data.uses : (n.type === 'memory' || n.type === 'file') ? (n.data.size || 0) : -1;
+    const valueOf = n => n.type === 'skill' ? n.data.uses : n.type === 'change' ? n.data.add + n.data.del : (n.type === 'memory' || n.type === 'file') ? (n.data.size || 0) : -1;
     const top = new Map();
     for (const n of nodes.values()) {
       const v = valueOf(n);
