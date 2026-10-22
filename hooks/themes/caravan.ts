@@ -604,12 +604,13 @@ export const CARAVAN: Theme = {
       day: Math.floor((t - n * SEASON_MS) / SEASON_MS * 90) + 1, frac: (t / YEAR_MS) % 1 };
   }
 
-  // Natural disasters. Each season starts three to six, from a seed of the
-  // season's number; six in ten come within four tiles of a road. A kind needs its
+  // Natural disasters. Each season starts five to eight, at any time in the
+  // season, from a seed of the season's number; six in ten come within four
+  // tiles of a road. About two are active at a time. A kind needs its
   // local season and its land: floods on rivers in spring, wildfires in
   // forest, jungle and grassland in summer, tropical storms at sea near the
   // coast in autumn, blizzards at high latitudes in winter; earthquakes in
-  // hills and mountains at any time, less often. Each lasts two to five real
+  // hills and mountains at any time, less often. Each lasts three to six real
   // minutes. Inside one, a tile costs mult times more to cross.
   const HAZARD = {
     flood: { name: 'Flood', season: 0, mult: 3, color: '#4f9fd0', r: [1, 2], land: true,
@@ -627,7 +628,7 @@ export const CARAVAN: Theme = {
   function disastersOf(n) {
     if (seasonDisasters.has(n)) return seasonDisasters.get(n);
     const rnd = rng(n * 7919 + 13), north = ((n % 4) + 4) % 4, kinds = Object.keys(HAZARD), out = [];
-    const count = 3 + Math.floor(rnd() * 4);
+    const count = 5 + Math.floor(rnd() * 4);
     for (let tries = 0; out.length < count && tries < 60; tries++) {
       const kind = kinds[Math.floor(rnd() * kinds.length)], hz = HAZARD[kind];
       if (kind === 'quake' && rnd() > 0.4) continue;
@@ -638,9 +639,9 @@ export const CARAVAN: Theme = {
       const near = spots.filter(tl => [...roadSet].some(k => tdist(unkey(k), [tl.q, tl.r]) <= 4));
       const pool = near.length && rnd() < 0.6 ? near : spots;
       const at = pool[Math.floor(rnd() * pool.length)];
-      const start = EPOCH + n * SEASON_MS + rnd() * SEASON_MS * 0.75;
+      const start = EPOCH + n * SEASON_MS + rnd() * SEASON_MS;
       out.push({ id: n + ':' + out.length, kind, q: at.q, r: at.r, radius: hz.r[0] + Math.floor(rnd() * (hz.r[1] - hz.r[0] + 1)),
-        start, end: start + 120000 + rnd() * 180000 });
+        start, end: start + 180000 + rnd() * 180000 });
     }
     seasonDisasters.set(n, out);
     return out;
@@ -1023,6 +1024,15 @@ export const CARAVAN: Theme = {
     pen.fillStyle = 'rgba(210,214,222,0.75)';
     pen.fillText('south: ' + SEASONS[(cal.season + 2) % 4] + ' \u00b7 1 hour = 1 year', x - R - 8, y + 9);
     const now = worldNow();
+    if (!active.length) {
+      // None now: the next one and the time until it starts.
+      const next = [...disastersOf(cal.n), ...disastersOf(cal.n + 1)].filter(d => d.start > now).sort((p, q) => p.start - q.start)[0];
+      if (next) {
+        const wait = Math.round((next.start - now) / 1000);
+        pen.fillStyle = 'rgba(210,214,222,0.75)';
+        pen.fillText('No disaster now \u00b7 next: ' + HAZARD[next.kind].name + ' in ' + Math.floor(wait / 60) + ':' + String(wait % 60).padStart(2, '0'), x - R - 8, y + 30);
+      }
+    }
     active.forEach((d, i) => {
       const hz = HAZARD[d.kind], left = Math.max(0, Math.round((d.end - now) / 1000));
       const yy = y + 30 + i * 15;
