@@ -850,7 +850,7 @@ const SHARED_B = `
   canvas.addEventListener('pointerleave', () => { if (!drag && !turn) { hover = undefined; tip.style.display = 'none'; } });
 
   // The frame rate drops when nothing moves, as each frame the terminal
-  // shows costs a full repaint of the pane.
+  // shows costs a full repaint of the pane (see frame).
   let last = 0;
   function frame(now) {
     requestAnimationFrame(frame);
@@ -860,8 +860,15 @@ const SHARED_B = `
     // It stops while the pointer is on a node, so the tooltip stays put.
     const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > 4000;
     view.auto = idle ? Math.min(1, view.auto + 0.02) : 0;
-    const busy = alpha > 0.004 || drag || turn || spin || Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || focus || view.auto > 0 || now - lastData < 1500;
-    if (now - last < (busy ? 33 : calm ? 1000 : 66)) return;
+    // Every drawn frame goes through the browser, terminal-browser, the
+    // terminal and the window server, so frames cost far more than drawing.
+    // A map has no layout to settle and no turn at rest: only input, a
+    // glide, a focus and fresh data make it busy; at rest it draws 10 frames
+    // a second. A hidden page draws none.
+    if (document.hidden) return;
+    const busy = (!MAP && (alpha > 0.004 || view.auto > 0)) || drag || turn || spin || Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 ||
+      focus || now - lastData < (MAP ? 500 : 1500);
+    if (now - last < (busy ? 33 : calm ? 1000 : MAP ? 100 : 66)) return;
     last = now;
     if (view.auto > 0 && !MAP) {
       if (AUTO_TURN) view.yaw += 0.0035 * view.auto;
