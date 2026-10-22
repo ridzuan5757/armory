@@ -188,10 +188,12 @@ export const CARAVAN: Theme = {
         for (const [dq, dr] of DIRS) {
           const k = tkey(cur[0] + dq, cur[1] + dr);
           if (!tiles.has(k) || path.includes(k)) continue;
-          if (tiles.get(k).h < low) { low = tiles.get(k).h; best = k; }
+          // A small random push, so the river changes direction now and then.
+          const v = tiles.get(k).h + 0.06 * hash('flow' + k);
+          if (v < low) { low = v; best = k; }
         }
         if (!best) break;
-        if (low >= tiles.get(tkey(...cur)).h && ++pits > 3) break;
+        if (low >= tiles.get(tkey(...cur)).h + 0.03 && ++pits > 3) break;
         path.push(best);
         cur = unkey(best);
         if (WET[tiles.get(best).terrain]) break;
@@ -295,7 +297,7 @@ export const CARAVAN: Theme = {
     // City sites.
     const score = new Map();
     for (const [k, tl] of tiles) {
-      if (!HOLDABLE[tl.terrain] || tl.terrain === 'mountain') continue;
+      if (!HOLDABLE[tl.terrain] || tl.terrain === 'mountain' || riverSet.has(k)) continue;
       const [q, r] = unkey(k);
       let s = { grass: 3, plains: 3, forest: 2, sand: 2, desert: 1, hills: 1.5 }[tl.terrain] || 0;
       if ([[0, 0], ...DIRS].some(([dq, dr]) => riverSet.has(tkey(q + dq, r + dr)))) s += 3;
@@ -355,7 +357,7 @@ export const CARAVAN: Theme = {
             for (const cell of ringAround(pc.q, pc.r, k)) {
               const ck = tkey(...cell), tl = tiles.get(ck);
               if (!tl || land.has(ck)) continue;
-              if (strict && !HOLDABLE[tl.terrain]) continue;
+              if (strict && (!HOLDABLE[tl.terrain] || riverSet.has(ck))) continue;
               if (strict === 2 && nearOther(cell, col.city)) continue;
               const s = k + 0.25 * (toCity.get(ck) ?? 99) + 0.001 * hash(id + ck);
               if (s < bs) { bs = s; best = cell; }
@@ -629,19 +631,52 @@ export const CARAVAN: Theme = {
       if (tl.terrain !== 'volcano') terrainMark(tl.terrain, s.x, s.y, s.f, dim * s.fog, hash(k), t);
     }
 
-    // Rivers: winding blue lines through their tiles.
+    // Rivers have their own tiles: ground, a water channel, ground. In each
+    // river tile the channel runs from the edge it shares with the previous
+    // river tile, through the middle, to the edge it shares with the next,
+    // so the channels join into one river; it starts as a spring in its
+    // first tile and runs into the sea tile at its mouth. Dark banks line
+    // both sides of the water.
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     for (const river of rivers) {
-      const pts = river.map(k => { const c = centerOf(k); return screen(c.x, c.y, 0); });
-      ctx.strokeStyle = 'rgba(90,166,214,0.9)';
-      ctx.lineWidth = Math.max(1.5, 3 * (pts[0] ? pts[0].f : 1));
-      ctx.beginPath();
-      pts.forEach((p, j) => {
-        if (!j) { ctx.moveTo(p.x, p.y); return; }
-        const q = pts[j - 1], w = (hash(river[j]) - 0.5) * 0.6;
-        ctx.quadraticCurveTo((p.x + q.x) / 2 - (p.y - q.y) * w, (p.y + q.y) / 2 + (p.x - q.x) * w, p.x, p.y);
-      });
-      ctx.stroke();
+      for (let j = 0; j < river.length; j++) {
+        const tl = tiles.get(river[j]);
+        if (!tl || WET[tl.terrain]) continue;
+        const c = centerOf(river[j]), mid = k => { const o = centerOf(k); return { x: (c.x + o.x) / 2, y: (c.y + o.y) / 2 }; };
+        const from = j > 0 ? mid(river[j - 1]) : c;
+        const to = j < river.length - 1 ? mid(river[j + 1]) : c;
+        // The channel bends to one side of the middle, so the river meanders.
+        const bend = (hash('bend' + river[j]) - 0.5) * TILE * 0.7;
+        const dx = to.x - from.x, dy = to.y - from.y, dl = Math.hypot(dx, dy) || 1;
+        const a = screen(from.x, from.y, 0), b = screen(to.x, to.y, 0);
+        const m = screen(c.x - dy / dl * bend, c.y + dx / dl * bend, 0);
+        const w = TILE * 0.46 * m.f;
+        const city = tl.city && nodes.get(tl.city);
+        const dim = city ? (inFocus(city) ? 1 : 0.5) : 0.8;
+        const stroke = (width, color) => {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = width;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo(m.x, m.y, b.x, b.y); ctx.stroke();
+        };
+        stroke(w * 2, rgba('#4a3d26', 0.9 * dim * m.fog));
+        stroke(w * 1.55, rgba('#8c7a50', 0.9 * dim * m.fog));
+        stroke(w, rgba('#4f9fd0', 0.97 * dim * m.fog));
+        if (!calm) {
+          ctx.setLineDash([w * 0.6, w * 1.4]);
+          ctx.lineDashOffset = -t * 6;
+          stroke(Math.max(0.6, w * 0.25), rgba('#d6ecf8', 0.55 * dim * m.fog));
+          ctx.setLineDash([]);
+          ctx.lineDashOffset = 0;
+        }
+        if (j === 0) {
+          const sp = screen(c.x, c.y, 0);
+          ctx.fillStyle = rgba('#8c7a50', 0.9 * dim * m.fog);
+          ctx.beginPath(); ctx.arc(sp.x, sp.y, w * 1.1, 0, 6.2832); ctx.fill();
+          ctx.fillStyle = rgba('#4f9fd0', 0.97 * dim * m.fog);
+          ctx.beginPath(); ctx.arc(sp.x, sp.y, w * 0.8, 0, 6.2832); ctx.fill();
+        }
+      }
     }
 
     // Borders: a thick line in the owner's color on each tile edge that
@@ -682,10 +717,11 @@ export const CARAVAN: Theme = {
     for (const k of roadSet) {
       if (!riverSet.has(k)) continue;
       const c = centerOf(k), s = screen(c.x, c.y, 0), u = TILE * s.f;
-      ctx.fillStyle = 'rgba(120,85,50,0.95)';
-      ctx.fillRect(s.x - u * 0.35, s.y - u * 0.12, u * 0.7, u * 0.24);
-      ctx.strokeStyle = 'rgba(70,50,30,0.9)'; ctx.lineWidth = 1;
-      ctx.strokeRect(s.x - u * 0.35, s.y - u * 0.12, u * 0.7, u * 0.24);
+      ctx.fillStyle = 'rgba(120,85,50,0.98)';
+      ctx.fillRect(s.x - u * 0.4, s.y - u * 0.14, u * 0.8, u * 0.28);
+      ctx.strokeStyle = 'rgba(70,50,30,0.95)'; ctx.lineWidth = 1;
+      ctx.strokeRect(s.x - u * 0.4, s.y - u * 0.14, u * 0.8, u * 0.28);
+      for (const dx of [-0.2, 0, 0.2]) { ctx.beginPath(); ctx.moveTo(s.x + dx * u, s.y - u * 0.14); ctx.lineTo(s.x + dx * u, s.y + u * 0.14); ctx.stroke(); }
     }
 
     drawVolcano(t);
