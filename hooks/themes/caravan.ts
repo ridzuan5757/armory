@@ -329,14 +329,23 @@ export const CARAVAN: Theme = {
     return path;
   }
 
-  // Colonies on the world. City sites: the best land for a city (good biome, by a
-  // river, on the coast, with room around it), five tiles or more apart.
-  // The largest colony gets the best site. Then the colonies take turns, one
-  // item each: an item takes the free tile near its parent's tile that is
-  // cheapest to reach from its city, and no tile within GAP of another
-  // colony; so a folder and its files form one district, and borders follow
-  // the land.
-  let owner = new Map(), sizes = new Map(), layoutGen = -1, layoutSize = -1, mapGen = 0;
+  // Colonies on the world, as in a strategy game: houses keep their tiles,
+  // a colony grows at its border and shrinks at its border.
+  //
+  // The first layout (and a layout after a city comes or goes) places all.
+  // City sites: the best land for a city (good biome, by a river, on the
+  // coast, with room around it), far apart; the largest colony gets the best
+  // site. Then the colonies take turns, one item each: an item takes the free
+  // tile near its parent's tile that is cheapest to reach from its city, and
+  // no tile within GAP of another colony; so a folder and its files form one
+  // district, and borders follow the land.
+  //
+  // After that, a new item takes a free tile next to its colony's land (near
+  // its parent, cheap to reach from the city). A removed item gives up a
+  // border tile: its own tile when that is on the border; else the colony's
+  // farthest border tile, whose house moves into the free tile.
+  let owner = new Map(), held = new Map(), cityCost = new Map(), cityKey = '';
+  let sizes = new Map(), layoutGen = -1, layoutSize = -1, mapGen = 0;
   function layout() {
     const kids = childrenMap();
     const size = new Map();
@@ -351,10 +360,36 @@ export const CARAVAN: Theme = {
     const cities = CITIES.filter(c => nodes.has(c));
     if (!tiles.size) buildWorld();
     mapGen++;
-    roads = []; roadSet = new Set(); plans.clear();
-    const before = new Map();
-    for (const [k, tl] of tiles) { if (tl.city) before.set(k, tl.city); tl.city = ''; }
+    const before = new Map(held);
+    const bySize = cities.slice().sort((a, b) => count(b) - count(a));
+    const cols = bySize.map(city => {
+      const order = [];
+      const walk = id => {
+        for (const c of (kids.get(id) || []).slice().sort((p, q) => count(q.id) - count(p.id) || p.id.localeCompare(q.id))) { order.push([c.id, id]); walk(c.id); }
+      };
+      walk(city);
+      return { city, order, i: 0 };
+    });
+    const moved = new Set();
+    const full = cities.join(',') !== cityKey;
+    if (full) { cityKey = cities.join(','); placeAll(bySize, cols, moved); }
+    else grow(cols, moved);
+    for (const [k, tl] of tiles) tl.city = held.get(k) || '';
+    noteBorders(before, full);
+    sizes = bodySizes();
+    for (const id of moved) { const n = nodes.get(id); if (n) n.settle = 0; }
+  }
 
+  // No tile within GAP of another colony's land.
+  function nearOther(cell, city) {
+    for (let d = 1; d <= GAP; d++) for (const c of ringAround(cell[0], cell[1], d)) {
+      const o = held.get(tkey(...c));
+      if (o && o !== city) return true;
+    }
+    return false;
+  }
+
+  function placeAll(bySize, cols, moved) {
     // City sites.
     const score = new Map();
     for (const [k, tl] of tiles) {
@@ -369,47 +404,32 @@ export const CARAVAN: Theme = {
     }
     const ranked = [...score.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
     let sites = [];
-    for (let gap = 14; gap >= 2 && sites.length < cities.length; gap--) {
+    for (let gap = 14; gap >= 2 && sites.length < bySize.length; gap--) {
       sites = [];
       for (const k of ranked) {
-        if (sites.length >= cities.length) break;
+        if (sites.length >= bySize.length) break;
         if (sites.every(s => tdist(unkey(s), unkey(k)) >= gap)) sites.push(k);
       }
     }
-    const bySize = cities.slice().sort((a, b) => count(b) - count(a));
-    const next = new Map(), land = new Map();
+    owner = new Map();
+    held = new Map();
     bySize.forEach((city, i) => {
       const k = sites[i] || ranked[i];
       const [q, r] = unkey(k);
-      next.set(city, { q, r, city });
-      land.set(k, city);
+      owner.set(city, { q, r, city });
+      held.set(k, city);
     });
-    const cost = new Map(bySize.map(city => [city, costsFrom(tkey(next.get(city).q, next.get(city).r))]));
+    cityCost = new Map(bySize.map(city => [city, costsFrom(tkey(owner.get(city).q, owner.get(city).r))]));
 
     // Territories, by turns.
-    const nearOther = (cell, city) => {
-      for (let d = 1; d <= GAP; d++) for (const c of ringAround(cell[0], cell[1], d)) {
-        const o = land.get(tkey(...c));
-        if (o && o !== city) return true;
-      }
-      return false;
-    };
-    const cols = bySize.map(city => {
-      const order = [];
-      const walk = id => {
-        for (const c of (kids.get(id) || []).slice().sort((p, q) => count(q.id) - count(p.id) || p.id.localeCompare(q.id))) { order.push([c.id, id]); walk(c.id); }
-      };
-      walk(city);
-      return { city, order, i: 0 };
-    });
     for (let left = true; left;) {
       left = false;
       for (const col of cols) {
         if (col.i >= col.order.length) continue;
         left = true;
         const [id, parent] = col.order[col.i++];
-        const pc = next.get(parent) || next.get(col.city);
-        const toCity = cost.get(col.city);
+        const pc = owner.get(parent) || owner.get(col.city);
+        const toCity = cityCost.get(col.city);
         let best;
         // First within the rules; then without the gap; then any free tile.
         for (const strict of [2, 1, 0]) {
@@ -417,7 +437,7 @@ export const CARAVAN: Theme = {
           for (let k = 1; k <= (strict ? 10 : 40); k++) {
             for (const cell of ringAround(pc.q, pc.r, k)) {
               const ck = tkey(...cell), tl = tiles.get(ck);
-              if (!tl || land.has(ck)) continue;
+              if (!tl || held.has(ck)) continue;
               if (strict && (!HOLDABLE[tl.terrain] || riverSet.has(ck))) continue;
               if (strict === 2 && nearOther(cell, col.city)) continue;
               const s = k + 0.25 * (toCity.get(ck) ?? 99) + 0.001 * hash(id + ck);
@@ -428,29 +448,86 @@ export const CARAVAN: Theme = {
           if (best) break;
         }
         if (!best) continue;
-        land.set(tkey(...best), col.city);
-        next.set(id, { q: best[0], r: best[1], city: col.city });
+        held.set(tkey(...best), col.city);
+        owner.set(id, { q: best[0], r: best[1], city: col.city });
       }
     }
-    for (const [k, city] of land) { const tl = tiles.get(k); if (tl) tl.city = city; }
-    owner = next;
-    noteBorders(before);
+    for (const id of owner.keys()) moved.add(id);
 
     // Roads: around the cities in order of angle, each the cheapest route on
     // land (water tiles on a road are a ferry).
-    const ring = cities.filter(c => next.has(c)).sort((a, b) => {
-      const pa = tileCenter(next.get(a).q, next.get(a).r), pb = tileCenter(next.get(b).q, next.get(b).r);
+    roads = []; roadSet = new Set(); plans.clear();
+    const ring = bySize.slice().sort((a, b) => {
+      const pa = tileCenter(owner.get(a).q, owner.get(a).r), pb = tileCenter(owner.get(b).q, owner.get(b).r);
       return Math.atan2(pa.y, pa.x) - Math.atan2(pb.y, pb.x);
     });
     for (let i = 0; i < ring.length; i++) {
-      const a = next.get(ring[i]), b = next.get(ring[(i + 1) % ring.length]);
-      const path = findPath(tkey(a.q, a.r), tkey(b.q, b.r));
-      roads.push(path);
+      const a = owner.get(ring[i]), b = owner.get(ring[(i + 1) % ring.length]);
+      roads.push(findPath(tkey(a.q, a.r), tkey(b.q, b.r)));
     }
     for (const path of roads) for (const k of path) if (!WET[tiles.get(k).terrain]) roadSet.add(k);
     plans.clear();
-    sizes = bodySizes();
-    for (const n of nodes.values()) if (owner.has(n.id)) n.settle = 0;
+  }
+
+  function grow(cols, moved) {
+    const want = new Map();
+    for (const col of cols) for (const [id, parent] of col.order) want.set(id, { parent, city: col.city });
+    // Gone items first, so their tiles are free for the new ones.
+    for (const [id, o] of [...owner]) {
+      if (o.city === id) continue;
+      const w = want.get(id);
+      if (w && w.city === o.city) continue;
+      owner.delete(id);
+      shrink(o.city, tkey(o.q, o.r), moved);
+    }
+    for (const [id, w] of want) {
+      if (owner.has(id)) continue;
+      const cell = frontier(id, w.city, owner.get(w.parent) || owner.get(w.city));
+      if (!cell) continue;
+      held.set(tkey(...cell), w.city);
+      owner.set(id, { q: cell[0], r: cell[1], city: w.city });
+      moved.add(id);
+    }
+  }
+
+  const onEdge = (k, city) => { const [q, r] = unkey(k); return DIRS.some(([dq, dr]) => held.get(tkey(q + dq, r + dr)) !== city); };
+  function shrink(city, freed, moved) {
+    if (onEdge(freed, city)) { held.delete(freed); return; }
+    const cost = cityCost.get(city), home = owner.get(city), homeKey = home && tkey(home.q, home.r);
+    let far, fd = -1;
+    for (const [k, c] of held) {
+      if (c !== city || k === freed || k === homeKey || !onEdge(k, city)) continue;
+      const d = (cost && cost.get(k)) ?? 99;
+      if (d > fd) { fd = d; far = k; }
+    }
+    if (!far) { held.delete(freed); return; }
+    const [q, r] = unkey(freed);
+    for (const [id, o] of owner) if (tkey(o.q, o.r) === far) { owner.set(id, { q, r, city }); moved.add(id); }
+    held.delete(far);
+  }
+
+  // The best free tile next to the colony's land: near the parent, cheap to
+  // reach from the city. First within the rules, then without the gap, then
+  // any land or water tile.
+  function frontier(id, city, pc) {
+    const toCity = cityCost.get(city) || new Map();
+    for (const strict of [2, 1, 0]) {
+      let best, bs = Infinity;
+      for (const [k, c] of held) {
+        if (c !== city) continue;
+        const [q, r] = unkey(k);
+        for (const [dq, dr] of DIRS) {
+          const cell = [q + dq, r + dr], ck = tkey(...cell), tl = tiles.get(ck);
+          if (!tl || held.has(ck)) continue;
+          if (strict && (!HOLDABLE[tl.terrain] || riverSet.has(ck))) continue;
+          if (strict === 2 && nearOther(cell, city)) continue;
+          const s = 0.6 * (pc ? tdist(cell, [pc.q, pc.r]) : 0) + 0.25 * (toCity.get(ck) ?? 99) + 0.001 * hash(id + ck);
+          if (s < bs) { bs = s; best = cell; }
+        }
+      }
+      if (best) return best;
+    }
+    return undefined;
   }
 
   // The camera shows the whole Earth when nothing has the focus.
@@ -460,12 +537,11 @@ export const CARAVAN: Theme = {
 
   // Border changes, as a strategy game shows them: each tile a colony gains
   // or loses flashes for CHANGE_MS, and the city shows the count (+2, -1).
-  // The first layout is no change.
+  // A layout that places all (the first one) is no change.
   const CHANGE_MS = 5000;
   const changes = new Map(), tally = new Map();
-  let laidOut = false;
-  function noteBorders(before) {
-    if (!laidOut) { laidOut = true; return; }
+  function noteBorders(before, full) {
+    if (full) return;
     const at = performance.now();
     const count = (city, key) => {
       const v = tally.get(city);
