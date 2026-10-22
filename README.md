@@ -39,6 +39,11 @@ Armory has four themes:
   reads only each server's name, type and scope from the config, never its
   env, args, headers or URL, and it records only the tool name and time of a
   call, never its arguments.
+- **Usage**: the 5-hour and 7-day rate limits (with their reset times), the
+  cost of this session, and how full the context of each running session
+  is, linked to that session. Green below 50 %, amber from 50 %, red from
+  80 %. For other sessions Armory reads only the end of the transcript, and
+  keeps only the token counts and the model name, never the text.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and
@@ -100,6 +105,8 @@ your usual browser.
 
 Armory runs on your computer only. It sends nothing over the network.
 
+- It reads the last usage block (token counts and model name only) from the
+  end of each running session's transcript.
 - It reads the MCP server names, types and scopes from `~/.claude.json` and
   `.mcp.json`, and the list of tools the session has.
 - It reads `~/.claude/history.jsonl`, `~/.claude/jobs`, your project memory

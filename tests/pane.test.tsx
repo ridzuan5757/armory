@@ -462,3 +462,56 @@ test('the mcp colony shows used servers only, and keeps secrets out', async ($, 
   expect(mcp[0].used.map((u: { tool: string; uses: number }) => [u.tool, u.uses])).toEqual([['run', 1]])
   expect(page).not.toContain('SECRET')
 })
+
+test('the usage colony reads limits, cost and each session context, and no transcript text', async ($, on) => {
+  const pages: string[] = []
+  const session = (pid: number, status: string) =>
+    JSON.stringify({ pid, sessionId: `s-${pid}`, cwd: `${HOME}/work`, name: `work-${pid}`, status, statusUpdatedAt: 1000 })
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('session.usage', () => ({ value: {
+    startedAt: 0, context: { tokens: 120000, window: 1000000, percent: 12 },
+    rateLimits: [{ kind: 'five_hour', percentUsed: 23.5, resetsAt: '2026-10-22T21:00:00Z' }, { kind: 'seven_day', percentUsed: 81 }],
+    cost: { usd: 12.345 },
+  } }))
+  on('fs.list', (_, e) => ({
+    value: e.path === `${HOME}/.claude/sessions` ? ['4242.json', '5000.json'].map(name => ({ name, kind: 'file', size: 0, mtimeMs: 0, isLink: false })) : [],
+  }))
+  on('fs.read', (_, e) => {
+    if (e.path.endsWith('/4242.json')) return { value: session(4242, 'busy') }
+    if (e.path.endsWith('/5000.json')) return { value: session(5000, 'idle') }
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  const tails: string[] = []
+  on('process.run', (_, e) => {
+    if (e.argv[0] === 'tail') {
+      tails.push(String(e.argv[3]))
+      return { value: { exitCode: 0, stdout: [
+        'cut line',
+        JSON.stringify({ message: { model: 'claude-opus-5-5', usage: { input_tokens: 2, cache_read_input_tokens: 300000, cache_creation_input_tokens: 998 }, content: 'SECRET-TEXT' } }),
+        JSON.stringify({ type: 'user', message: { content: 'SECRET-PROMPT' } }),
+      ].join('\n'), stderr: '' } }
+    }
+    return { value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : e.argv[0] === 'ps' ? ' 4242\n 5000\n' : '', stderr: '' } }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  const page = pages.at(-1) ?? ''
+  const usage = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot.usage
+  expect(usage).toEqual({
+    limits: [{ kind: 'five_hour', percent: 23.5, resetsAt: '2026-10-22T21:00:00Z' }, { kind: 'seven_day', percent: 81, resetsAt: '' }],
+    cost: 12.35,
+    contexts: [
+      { pid: 4242, name: 'work-4242', tokens: 120000, window: 1000000, percent: 12, model: 'this session', self: true },
+      { pid: 5000, name: 'work-5000', tokens: 301000, window: 1000000, percent: 30, model: 'claude-opus-5-5', self: false },
+    ],
+  })
+  expect(tails).toEqual([`${HOME}/.claude/projects/-home-u-work/s-5000.jsonl`])
+  expect(page).not.toContain('SECRET')
+})

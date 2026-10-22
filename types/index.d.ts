@@ -45,6 +45,15 @@ export type McpRow = {
   tools: number
   used: { tool: string; at: number; uses: number }[]
 }
+// The USAGE colony: the rate-limit windows and cost of this session (from the
+// engine), and the context fill of each running session. A context comes from
+// the engine for this session, and for the others from the last usage block
+// in their transcript: only numbers and the model name, never text.
+export type UsageRow = {
+  limits: { kind: string; percent: number; resetsAt: string }[]
+  cost: number
+  contexts: { pid: number; name: string; tokens: number; window: number; percent: number; model: string; self: boolean }[]
+}
 export type Snapshot = {
   skills: SkillRow[]
   jobs: JobRow[]
@@ -53,6 +62,7 @@ export type Snapshot = {
   sessions: SessionRow[]
   git: GitRepo[]
   mcp: McpRow[]
+  usage: UsageRow
   loadedAt: number
   errors: string[]
 }
