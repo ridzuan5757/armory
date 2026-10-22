@@ -352,7 +352,8 @@ export const CARAVAN: Theme = {
     if (!tiles.size) buildWorld();
     mapGen++;
     roads = []; roadSet = new Set(); plans.clear();
-    for (const tl of tiles.values()) tl.city = '';
+    const before = new Map();
+    for (const [k, tl] of tiles) { if (tl.city) before.set(k, tl.city); tl.city = ''; }
 
     // City sites.
     const score = new Map();
@@ -433,6 +434,7 @@ export const CARAVAN: Theme = {
     }
     for (const [k, city] of land) { const tl = tiles.get(k); if (tl) tl.city = city; }
     owner = next;
+    noteBorders(before);
 
     // Roads: around the cities in order of angle, each the cheapest route on
     // land (water tiles on a road are a ferry).
@@ -454,6 +456,30 @@ export const CARAVAN: Theme = {
   // The camera shows the whole Earth when nothing has the focus.
   function fitBounds() {
     return { x: 0, y: 0, z: 0, r: OX, w: 2 * OX + 2 * TILE, h: (2 * OY + 2 * TILE) * Math.max(0.4, Math.cos(view.pitch)) };
+  }
+
+  // Border changes, as a strategy game shows them: each tile a colony gains
+  // or loses flashes for CHANGE_MS, and the city shows the count (+2, -1).
+  // The first layout is no change.
+  const CHANGE_MS = 5000;
+  const changes = new Map(), tally = new Map();
+  let laidOut = false;
+  function noteBorders(before) {
+    if (!laidOut) { laidOut = true; return; }
+    const at = performance.now();
+    const count = (city, key) => {
+      const v = tally.get(city);
+      const t = v && at - v.at < CHANGE_MS ? v : { gain: 0, lose: 0 };
+      t[key]++; t.at = at;
+      tally.set(city, t);
+    };
+    for (const [k, tl] of tiles) {
+      const was = before.get(k) || '';
+      if (was === tl.city) continue;
+      if (was) count(was, 'lose');
+      if (tl.city) { changes.set(k, { kind: 'gain', city: tl.city, at }); count(tl.city, 'gain'); }
+      else changes.set(k, { kind: 'lose', city: was, at });
+    }
   }
 
   // The tile under a point, or the nearest tile on the map.
@@ -658,6 +684,73 @@ export const CARAVAN: Theme = {
     }
   }
 
+  // Gained tiles pulse in the colony's color with a solid edge; lost tiles
+  // flash red with a dashed edge. A file in use outlines its tile in the
+  // color of the tool's work (read, write, new). Over each city, the count
+  // of tiles it gained and lost rises and fades (drawTally).
+  function drawChanges(now, t) {
+    const pulse = calm ? 1 : 0.5 + 0.5 * Math.sin(t * 7);
+    const outline = (k, color, alpha, dash) => {
+      const pts = tilePath(centerOf(k), 0.97);
+      fillPath(pts);
+      pen.fillStyle = rgba(color, (0.2 + 0.3 * pulse) * alpha);
+      pen.fill();
+      pen.setLineDash(dash ? [3, 3] : []);
+      pen.strokeStyle = rgba(color, 0.95 * alpha);
+      pen.lineWidth = Math.max(1.5, 3 * pts[0].f);
+      pen.stroke();
+      pen.setLineDash([]);
+    };
+    for (const [k, c] of changes) {
+      const age = (now - c.at) / CHANGE_MS;
+      if (age >= 1) { changes.delete(k); continue; }
+      const city = nodes.get(c.city);
+      outline(k, c.kind === 'gain' ? (city ? city.color : '#ffffff') : '#ff4d4d', 1 - age, c.kind === 'lose');
+      // A gained tile also sends out one ring as it joins.
+      if (c.kind === 'gain' && age < 0.3 && !calm) {
+        const s = screen(centerOf(k).x, centerOf(k).y, 0);
+        pen.strokeStyle = rgba(city ? city.color : '#ffffff', 1 - age / 0.3);
+        pen.lineWidth = 2;
+        pen.beginPath(); pen.arc(s.x, s.y, TILE * s.f * (0.6 + 2.5 * age), 0, 6.2832); pen.stroke();
+      }
+    }
+    for (const n of nodes.values()) {
+      if (n.type !== 'file' || n.dying || !owner.has(n.id)) continue;
+      const heat = heatOf(n);
+      if (heat < 0.05) continue;
+      const o = owner.get(n.id);
+      outline(tkey(o.q, o.r), OP[n.op] || '#ffffff', heat, false);
+    }
+  }
+  // The tile count over each city: a dark tag above the city's label.
+  function drawTally(now) {
+    pen.font = '700 15px ui-sans-serif, system-ui, sans-serif';
+    pen.textAlign = 'left';
+    pen.textBaseline = 'middle';
+    for (const [city, v] of tally) {
+      const age = (now - v.at) / CHANGE_MS;
+      if (age >= 1 || !owner.has(city)) { tally.delete(city); continue; }
+      const fade = Math.min(1, 4 * (1 - age));
+      const o = owner.get(city), c = tileCenter(o.q, o.r), s = screen(c.x, c.y, 0);
+      const parts = [];
+      if (v.gain) parts.push(['+' + v.gain, '#7be08a']);
+      if (v.lose) parts.push(['\u2212' + v.lose, '#ff6b6b']);
+      const widths = parts.map(([text]) => pen.measureText(text).width);
+      const w = widths.reduce((a, b) => a + b, 0) + 8 * (parts.length - 1) + 16;
+      const y = s.y - 26 * s.f - 30 - 10 * age;
+      let x = s.x - w / 2;
+      pen.fillStyle = rgba('#14161b', 0.85 * fade);
+      pen.beginPath(); pen.roundRect(x, y - 11, w, 22, 6); pen.fill();
+      x += 8;
+      parts.forEach(([text, color], i) => {
+        pen.fillStyle = rgba(color, fade);
+        pen.fillText(text, x, y + 1);
+        x += widths[i] + 8;
+      });
+    }
+    pen.textBaseline = 'alphabetic';
+  }
+
   // A house: a box with a roof, sized by its data; a used one lights its window.
   function house(x, y, s, color, fade, lit) {
     pen.fillStyle = rgba(color, 0.9 * fade);
@@ -823,6 +916,7 @@ export const CARAVAN: Theme = {
     pen.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawRivers(inFocus, t, true);
 
+    drawChanges(now, t);
     drawVolcano(t);
 
     // Cities and houses, far ones first.
@@ -908,6 +1002,7 @@ export const CARAVAN: Theme = {
 
     drawClouds(t);
     drawLabels(order, near, fc, inFocus, now, n => (n.kind === 'hub' ? 26 : 12) * n.sf);
+    drawTally(now);
   }
 
 `,
