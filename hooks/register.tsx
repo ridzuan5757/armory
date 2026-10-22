@@ -6,7 +6,7 @@ import type { FileOp, FileRow, JobRow, MemoryRow, SessionRow, SkillRow, Snapshot
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
 import { paint } from './views'
-import { DEFAULT_THEME, THEMES, dataScript, pageOf } from './web'
+import { DEFAULT_THEME, THEMES, buildOf, dataScript, pageOf } from './web'
 
 const PANE = 'armory'
 const TITLE = 'Armory'
@@ -315,10 +315,13 @@ async function refresh($: EngineInterface) {
 
 // The web page and the last Raster size live only in this process; a reload
 // starts them over, and /armory web turns the page on again.
-const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME }
+const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME, page: '' }
 let mounted: { columns: number; rows: number; tab: Tab } | undefined
 
 async function writeData($: EngineInterface, snap: Snapshot, pollMs: number) {
+  // The page reloads when the data's build differs from its own, so the page
+  // on disk must be the current one first, or it would reload without end.
+  if (web.page !== buildOf(web.theme)) await writePage($)
   web.seq++
   await $.fs.write(`${web.dir}/data.js`, dataScript(snap, web.seq, pollMs, web.theme))
 }
@@ -341,7 +344,7 @@ async function openWeb($: EngineInterface, isFallbackOk = true) {
   }
   web.dir = dir
   web.theme = await themeOf($)
-  await $.fs.write(`${web.dir}/index.html`, pageOf(web.theme))
+  await writePage($)
   web.isOn = true
   await writeData($, await read($, snapshot), 1000)
   const page = `${web.dir}/index.html`
@@ -379,6 +382,11 @@ async function openWeb($: EngineInterface, isFallbackOk = true) {
   return `${page} (default browser)`
 }
 
+async function writePage($: EngineInterface) {
+  await $.fs.write(`${web.dir}/index.html`, pageOf(web.theme))
+  web.page = buildOf(web.theme)
+}
+
 // The theme the person chose last, kept across sessions in the plugin's store.
 async function themeOf($: EngineInterface) {
   const saved = await $.store.get('theme').catch(() => undefined)
@@ -395,7 +403,7 @@ async function setTheme($: EngineInterface, name: string) {
   await $.store.set('theme', name)
   web.theme = name
   if (web.isOn) {
-    await $.fs.write(`${web.dir}/index.html`, pageOf(name))
+    await writePage($)
     await writeData($, await read($, snapshot), 1000)
   }
 

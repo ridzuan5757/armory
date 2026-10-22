@@ -18,6 +18,25 @@ export type Theme = { name: string; legend: string; script: string }
 export const THEMES: Record<string, Theme> = { mold: MOLD, orbit: ORBIT, hive: HIVE }
 export const DEFAULT_THEME = 'mold'
 
+// A fingerprint of a theme's page code. Each data update carries the one of
+// the current code; an open page with another fingerprint reloads itself, so
+// a plugin update reaches a split that is already open.
+const builds = new Map<string, string>()
+export const buildOf = (name: string) => {
+  const theme = THEMES[name] ?? MOLD
+  let build = builds.get(theme.name)
+  if (!build) {
+    let h = 2166136261
+    for (const part of [HEAD, theme.legend, SHARED_A, theme.script, SHARED_B]) {
+      for (let i = 0; i < part.length; i++) h = Math.imul(h ^ part.charCodeAt(i), 16777619)
+    }
+    build = (h >>> 0).toString(36)
+    builds.set(theme.name, build)
+  }
+
+  return build
+}
+
 export const pageOf = (name: string) => {
   const theme = THEMES[name] ?? MOLD
 
@@ -26,7 +45,7 @@ export const pageOf = (name: string) => {
   <span id="errors"></span>
 </footer>
 <script>
-  const THEME = '${theme.name}';
+  const THEME = '${theme.name}', BUILD = '${buildOf(theme.name)}';
 ` + SHARED_A + theme.script + SHARED_B + `
 </script>
 </body>
@@ -579,8 +598,9 @@ const SHARED_B = `
 
   let pollMs = 1000, lastSeq = -1, frames = 0, windowStart = performance.now(), lastData = 0;
   window.armoryData = d => {
-    // A theme change rewrites index.html; the old page reloads to show it.
-    if (d.theme && d.theme !== THEME) { location.reload(); return; }
+    // A theme change or a plugin update rewrites index.html; the old page
+    // reloads to show it.
+    if ((d.theme && d.theme !== THEME) || (d.build && d.build !== BUILD)) { location.reload(); return; }
     if (d.seq === lastSeq) return;
     lastSeq = d.seq; pollMs = d.pollMs || 1000; frames++;
     const s = d.snapshot;
@@ -613,4 +633,4 @@ const SHARED_B = `
 `
 
 export const dataScript = (snapshot: Snapshot, seq: number, pollMs: number, theme: string) =>
-  `window.armoryData(${JSON.stringify({ seq, pollMs, theme, snapshot })})\n`
+  `window.armoryData(${JSON.stringify({ seq, pollMs, theme, build: buildOf(theme), snapshot })})\n`
