@@ -1,6 +1,6 @@
 {
   "name": "armory",
-  "version": "0.25.0",
+  "version": "0.28.0",
   "description": "Live 3D dashboard for skills, jobs, memory and the files tools use, with mold, orbit, hive and caravan themes",
   "types": "./types/index.d.ts",
   "author": {
