@@ -4,11 +4,12 @@
 export const HORSE_KIT = `
   // The sad red horse, after the plush the person chose: a red body, a white
   // muzzle with a frown, a blue eye, a brown mane, tail and hooves, and a
-  // gold collar with a bell. Side view; dir < 0 faces left. run (0 to 1)
-  // swings the legs. Small on screen, it keeps only its eye.
+  // gold collar with a bell. The body is a side view (dir < 0 faces left;
+  // run, 0 to 1, swings the legs), and the head turns to the viewer, so its
+  // frown shows. Small on screen, it keeps two eye dots and the frown.
   function drawHorse(x, y, dir, t, fade, f, o) {
     o = o || {};
-    const R = 6 * Math.max(1, f);
+    const R = 7 * Math.max(1, f);
     const run = o.run || 0;
     const ph = t * (5 + 9 * run) + (o.seed || 0) * 9;
     const bob = Math.sin(ph * 2) * R * 0.07 * (0.3 + run);
@@ -49,46 +50,57 @@ export const HORSE_KIT = `
     ctx.strokeStyle = '#e6b422'; ctx.lineWidth = R * 0.16;
     ctx.beginPath(); ctx.moveTo(R * 0.62, -R * 0.5); ctx.lineTo(R * 1.12, -R * 0.24); ctx.stroke();
     ctx.fillStyle = '#f2c230'; ctx.beginPath(); ctx.arc(R * 0.92, -R * 0.2, R * 0.13, 0, 6.2832); ctx.fill();
-    // Head, ears, mane.
-    const hx = R * 1.25, hy = -R * 1.2;
-    ctx.fillStyle = '#d7262b';
-    ctx.beginPath(); ctx.arc(hx, hy, R * 0.58, 0, 6.2832); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(hx - R * 0.32, hy - R * 0.38); ctx.lineTo(hx - R * 0.2, hy - R * 0.9); ctx.lineTo(hx + R * 0.02, hy - R * 0.45); ctx.fill();
-    ctx.fillStyle = '#f3e3e0';
-    ctx.beginPath(); ctx.moveTo(hx - R * 0.26, hy - R * 0.45); ctx.lineTo(hx - R * 0.19, hy - R * 0.75); ctx.lineTo(hx - R * 0.07, hy - R * 0.47); ctx.fill();
-    // Mane: a strip down the back of the neck and a small tuft on top.
+    // Mane: a strip down the back of the neck.
+    const hx = R * 1.2, hy = -R * 1.3;
     ctx.strokeStyle = '#7a4a2a';
     ctx.lineWidth = R * 0.22;
-    ctx.beginPath(); ctx.moveTo(hx - R * 0.42, hy - R * 0.2); ctx.quadraticCurveTo(R * 0.55, -R * 0.75, R * 0.42, -R * 0.32); ctx.stroke();
-    ctx.fillStyle = '#7a4a2a';
-    ctx.beginPath(); ctx.ellipse(hx - R * 0.1, hy - R * 0.55, R * 0.2, R * 0.12, -0.5, 0, 6.2832); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(hx + R * 0.08, hy - R * 0.6, R * 0.16, R * 0.1, -0.2, 0, 6.2832); ctx.fill();
-    // White muzzle with the frown.
-    ctx.fillStyle = '#f3e9e4';
-    ctx.beginPath(); ctx.ellipse(hx + R * 0.32, hy + R * 0.28, R * 0.32, R * 0.26, 0.2, 0, 6.2832); ctx.fill();
-    // Eye: blue with a shine; a dot when small.
-    const ex = hx + R * 0.02, ey = hy - R * 0.08;
-    if (R >= 6.5) {
-      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(ex, ey, R * 0.17, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = '#3f8fd9'; ctx.beginPath(); ctx.arc(ex + R * 0.03, ey, R * 0.12, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = '#1a2230'; ctx.beginPath(); ctx.arc(ex + R * 0.04, ey, R * 0.06, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(ex + R * 0.07, ey - R * 0.05, R * 0.03, 0, 6.2832); ctx.fill();
-      ctx.strokeStyle = '#5a3418'; ctx.lineWidth = Math.max(0.7, R * 0.06);
-      ctx.beginPath(); ctx.arc(hx + R * 0.34, hy + R * 0.42, R * 0.11, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
-      ctx.fillStyle = 'rgba(244,160,150,0.5)';
-      ctx.beginPath(); ctx.ellipse(hx + R * 0.05, hy + R * 0.2, R * 0.12, R * 0.07, 0, 0, 6.2832); ctx.fill();
-    } else {
-      ctx.fillStyle = '#1a2230'; ctx.beginPath(); ctx.arc(ex, ey, Math.max(0.6, R * 0.1), 0, 6.2832); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(hx - R * 0.5, hy - R * 0.1); ctx.quadraticCurveTo(R * 0.5, -R * 0.75, R * 0.42, -R * 0.32); ctx.stroke();
+    // The head turns to the viewer: ears, a tuft, a round face.
+    for (const side of [-1, 1]) {
+      ctx.fillStyle = '#d7262b';
+      ctx.beginPath(); ctx.moveTo(hx + side * R * 0.2, hy - R * 0.5); ctx.lineTo(hx + side * R * 0.55, hy - R * 1.0); ctx.lineTo(hx + side * R * 0.58, hy - R * 0.35); ctx.fill();
+      ctx.fillStyle = '#f3e3e0';
+      ctx.beginPath(); ctx.moveTo(hx + side * R * 0.3, hy - R * 0.5); ctx.lineTo(hx + side * R * 0.52, hy - R * 0.85); ctx.lineTo(hx + side * R * 0.52, hy - R * 0.45); ctx.fill();
     }
-    // Swarm shades, the "deal with it" meme: black pixels drop onto the eye.
+    ctx.fillStyle = '#d7262b';
+    ctx.beginPath(); ctx.ellipse(hx, hy, R * 0.62, R * 0.68, 0, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = '#7a4a2a';
+    ctx.beginPath(); ctx.ellipse(hx - R * 0.1, hy - R * 0.62, R * 0.17, R * 0.11, -0.4, 0, 6.2832); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(hx + R * 0.1, hy - R * 0.64, R * 0.15, R * 0.1, 0.4, 0, 6.2832); ctx.fill();
+    // White muzzle, wider than the face, with two nostrils and the frown.
+    ctx.fillStyle = '#f3e9e4';
+    ctx.beginPath(); ctx.ellipse(hx, hy + R * 0.38, R * 0.5, R * 0.34, 0, 0, 6.2832); ctx.fill();
+    const ey = hy - R * 0.1, line = Math.max(0.7, R * 0.07);
+    ctx.strokeStyle = '#5a3418'; ctx.lineWidth = line;
+    if (R >= 6.5) {
+      // Two eyes that look down and in, under brows that rise to the middle.
+      for (const side of [-1, 1]) {
+        const ex = hx + side * R * 0.27;
+        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(ex, ey, R * 0.16, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#3f8fd9'; ctx.beginPath(); ctx.arc(ex - side * R * 0.03, ey + R * 0.04, R * 0.11, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#1a2230'; ctx.beginPath(); ctx.arc(ex - side * R * 0.03, ey + R * 0.05, R * 0.055, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(ex - side * R * 0.01, ey, R * 0.028, 0, 6.2832); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(ex + side * R * 0.16, ey - R * 0.2); ctx.lineTo(ex - side * R * 0.1, ey - R * 0.3); ctx.stroke();
+        ctx.fillStyle = 'rgba(244,160,150,0.55)';
+        ctx.beginPath(); ctx.ellipse(hx + side * R * 0.45, hy + R * 0.15, R * 0.1, R * 0.06, 0, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = '#8a4a3a';
+        ctx.beginPath(); ctx.ellipse(hx + side * R * 0.17, hy + R * 0.3, R * 0.06, R * 0.04, 0, 0, 6.2832); ctx.fill();
+      }
+    } else {
+      ctx.fillStyle = '#1a2230';
+      for (const side of [-1, 1]) { ctx.beginPath(); ctx.arc(hx + side * R * 0.25, ey, Math.max(0.7, R * 0.1), 0, 6.2832); ctx.fill(); }
+    }
+    // The frown: a wide arc that bends down at both ends.
+    ctx.beginPath(); ctx.arc(hx, hy + R * 0.66, R * 0.24, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+    // Swarm shades, the "deal with it" meme: black pixels drop onto the eyes.
     if (o.shades > 0) {
-      const u = Math.max(0.6, R * 0.1);
-      const ox = hx - 5 * u, oy = ey - 1.2 * u - (1 - o.shades) * R * 2;
+      const u = Math.max(0.6, R * 0.075);
+      const ox = hx - 6 * u, oy = ey - 1.4 * u - (1 - o.shades) * R * 2;
       const px = (a, b, w = 1) => ctx.fillRect(ox + a * u, oy + b * u, w * u + 0.3, u + 0.3);
       ctx.globalAlpha = fade * o.shades;
       ctx.fillStyle = '#111111';
-      px(0, 0, 10); px(2, 1, 4); px(7, 1, 3); px(3, 2, 2); px(7, 2, 2);
-      ctx.fillStyle = '#ffffff'; px(3, 1); px(7, 1);
+      px(0, 0, 12); px(1, 1, 4); px(7, 1, 4); px(1, 2, 3); px(8, 2, 3); px(2, 3, 2); px(8, 3, 2);
+      ctx.fillStyle = '#ffffff'; px(2, 1); px(8, 1);
     }
     ctx.restore();
     ctx.globalAlpha = 1;
