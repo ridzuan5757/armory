@@ -1,0 +1,262 @@
+import { expect, mock, test } from 'claude-code/testing'
+
+const HOME = '/home/u'
+
+// Decodes the painted Raster back to lines of text.
+async function bodyText(ui: { find: (q: { type: string; key?: string }) => Promise<unknown> }) {
+  const found = (await ui.find({ type: 'Raster', key: 'body' })) as
+    | { props: { columns: number; cells: string } }
+    | undefined
+  if (!found) return ''
+  const { columns, cells } = found.props
+  const bytes = Uint8Array.from(atob(cells), ch => ch.charCodeAt(0))
+  const words = new Uint32Array(bytes.buffer)
+  const lines: string[] = []
+  for (let i = 0; i < words.length / 3; i += columns) {
+    let line = ''
+    for (let k = i; k < i + columns; k++) line += String.fromCodePoint(words[k * 3] ?? 32)
+    lines.push(line)
+  }
+  return lines.join('\n')
+}
+const MEM = `${HOME}/.claude/projects/-work/memory`
+
+const FILES: Record<string, string> = {
+  [`${HOME}/.claude/history.jsonl`]: [
+    '{"display":"/graphify run","project":"/work"}',
+    '{"display":"/graphify","project":"/work"}',
+    '{"display":"hello","project":"/work"}',
+  ].join('\n'),
+  [`${HOME}/.claude/skills/graphify/SKILL.md`]: '---\nname: graphify\nmodel: sonnet\n---\nbody',
+  [`${HOME}/.claude/jobs/j1/state.json`]: '{"state":"running","intent":"build the thing","detail":"step 2"}',
+  [`${MEM}/MEMORY.md`]: '- [Alpha](project_alpha.md) — a\n- [Beta](feedback_beta.md) — b\n',
+  [`${MEM}/project_alpha.md`]: '---\nname: alpha\n---\nsee [[beta]]',
+  [`${MEM}/feedback_beta.md`]: '---\nname: beta\n---\nnone',
+}
+
+const PANE = {
+  plugin: 'armory',
+  component: 'Pane',
+  requestId: 'armory',
+  props: {
+    title: 'Armory',
+    isFocused: false,
+    bodyColumns: 60,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 20 },
+    view: {},
+  },
+} as const
+
+test('the pane shows skills, jobs and memory', async ($, on) => {
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({
+    value: [
+      { name: 'graphify', description: '', source: 'user' },
+      { name: 'help', description: '', source: 'builtin' },
+    ],
+  }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('env.get', () => ({ value: HOME }))
+  on('fs.list', () => ({
+    value: [{ name: 'j1', kind: 'directory', size: 0, mtimeMs: 0, isLink: false }],
+  }))
+  on('fs.read', (_, e) => {
+    const text = FILES[e.path]
+    if (text === undefined) throw new Error(`ENOENT ${e.path}`)
+    return { value: text }
+  })
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  let text = ''
+  for (let i = 0; i < 50 && !text.includes('graphify'); i++) text = await bodyText(ui)
+  expect(text).toMatch(/ARMORY/)
+  expect(text).toMatch(/graphify\s+sonnet\s+█+\s+2\s+│/)
+  expect(text).not.toMatch(/help/)
+
+  await ui.press({ key: 'jobs' })
+  expect(await bodyText(ui)).toMatch(/RUNNING\s+build the thing/)
+
+  await ui.press({ key: 'memory' })
+  const memory = await bodyText(ui)
+  expect(memory).toMatch(/PROJECT 1/)
+  expect(memory).toMatch(/Alpha\s+↓0 ↑1/)
+  expect(memory).toMatch(/Beta\s+↓1 ↑0/)
+  await ui.unmount()
+})
+
+test('other surfaces get a note in place of the raster', async ($, on) => {
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /terminal only/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('session end closes only the split of this session', async ($, on) => {
+  const runs: string[][] = []
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('env.get', () => ({ value: HOME }))
+  on('process.run', (_, e) => {
+    runs.push([...e.argv])
+    // The pid lookup is the one shell the hook starts; it answers a pid.
+    const stdout = e.argv[0] === 'sh' ? '4242\n' : ''
+    return { value: { exitCode: 0, stdout, stderr: '' } }
+  })
+  on('session.end', () => ({ sessionId: 'abc-123' }))
+
+  await $.session.end({ reason: 'prompt_input_exit', sessionId: 'abc-123', resume: { id: 'abc-123' } })
+
+  // The close runs detached; its script is the last argument.
+  const script = runs.at(-1)?.at(-1)
+  expect(script).toContain(`pkill -TERM -f "$sig$tail"`)
+  expect(script).toContain(`tail='abc-123-p4242-'`)
+  // The session's own page folder goes with it.
+  expect(script).toContain(`rm -rf '/home/u/.claude/armory/web/abc-123-p4242'`)
+})
+
+test('each session writes its page and data to its own folder', async ($, on) => {
+  const written: string[] = []
+  let id = 'one'
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: id }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', () => { throw new Error('ENOENT') })
+  on('fs.list', () => ({ value: [] }))
+  on('fs.write', (_, e) => (written.push(e.path), { value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  id = 'two'
+  await $.command.run({ command: 'armory', args: 'web' })
+
+  expect(written).toContain(`${HOME}/.claude/armory/web/one-p4242/index.html`)
+  expect(written).toContain(`${HOME}/.claude/armory/web/one-p4242/data.js`)
+  expect(written).toContain(`${HOME}/.claude/armory/web/two-p4242/index.html`)
+  expect(written).not.toContain(`${HOME}/.claude/armory/web/data.js`)
+})
+
+test('tools light the files they use; new and removed files follow the disk', async ($, on) => {
+  const clock = mock.clock(on)
+  const src = new Set(['a.ts', 'bad.ts'])
+  const pages: string[] = []
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', (_, e) => {
+    const text = FILES[e.path]
+    if (text === undefined) throw new Error(`ENOENT ${e.path}`)
+    return { value: text }
+  })
+  on('fs.write', (_, e) => {
+    if (e.path.endsWith('data.js')) pages.push(e.text)
+    return { value: undefined }
+  })
+  const entry = (name: string, kind: 'file' | 'dir') => ({ name, kind, size: 0, mtimeMs: 0, isLink: false })
+  on('fs.list', (_, e) => {
+    if (e.path === '/work') return { value: [entry('src', 'dir'), entry('README.md', 'file'), entry('node_modules', 'dir')] }
+    if (e.path === '/work/src') return { value: [...src].map(name => entry(name, 'file')) }
+    if (e.path === `${HOME}/.claude/jobs`) return { value: [entry('j1', 'dir'), entry('leftover', 'dir')] }
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('tool.call', (_, e) =>
+    'file_path' in e && String(e.file_path).includes('bad') ? { result: 'no such file', isError: true } : { result: {} },
+  )
+  on('fs.exists', (_, e) => ({ value: src.has(e.path.slice('/work/src/'.length)) }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  const last = () => {
+    const page = pages.at(-1) ?? ''
+    return JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot as {
+      files: { path: string; kind: string; op: string }[]
+      jobs: { id: string }[]
+      errors: string[]
+    }
+  }
+  const files = () => Object.fromEntries(last().files.map(f => [f.path, `${f.kind}:${f.op}`]))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+
+  await $.tool.call({ tool: 'Read', file_path: '/work/src/a.ts' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/src/bad.ts' })
+  await clock.advance(300)
+  expect(files()).toEqual({ src: 'dir:', 'README.md': 'file:', 'src/a.ts': 'file:read' })
+  // A job folder with no state.json is skipped, with no error.
+  expect(last().jobs.map(j => j.id)).toEqual(['j1'])
+  expect(last().errors).toEqual([])
+
+  // b.ts appears and a.ts goes: the next load marks b.ts new and drops a.ts.
+  src.add('b.ts')
+  src.delete('a.ts')
+  await $.tool.call({ tool: 'Edit', file_path: '/work/README.md', old_string: 'a', new_string: 'b' })
+  await clock.advance(300)
+  expect(files()).toEqual({ src: 'dir:', 'README.md': 'file:write', 'src/b.ts': 'file:new' })
+
+  // A Write that creates a file is new, even in a folder listed before; one
+  // that replaces a file is a write.
+  await $.tool.call({ tool: 'Write', file_path: '/work/src/c.ts', content: 'x' })
+  src.add('c.ts')
+  await $.tool.call({ tool: 'Write', file_path: '/work/src/b.ts', content: 'y' })
+  await clock.advance(300)
+  expect(files()).toMatchObject({ 'src/c.ts': 'file:new', 'src/b.ts': 'file:write' })
+})
+
+test('/armory theme saves the theme and rewrites the page for it', async ($, on) => {
+  mock.store(on)
+  const writes = new Map<string, string>()
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', () => { throw new Error('ENOENT') })
+  on('fs.list', () => ({ value: [] }))
+  on('fs.write', (_, e) => (writes.set(e.path.split('/').pop() ?? '', e.text), { value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  const run = async (args: string) => ((await $.command.run({ command: 'armory', args })) as { text: string }).text
+
+  expect(await run('web')).toMatch(/terminal-browser/)
+  expect(writes.get('index.html')).toContain("const THEME = 'mold'")
+  expect(await run('theme')).toMatch(/Theme: mold\. Themes: mold, orbit, hive/)
+  expect(await run('theme saturn')).toMatch(/No theme named saturn/)
+
+  expect(await run('theme orbit')).toBe('Armory theme: orbit.')
+  expect(writes.get('index.html')).toContain("const THEME = 'orbit'")
+  expect(writes.get('data.js')).toContain('"theme":"orbit"')
+  // The store keeps it: the plain command reads it back.
+  expect(await run('theme')).toMatch(/Theme: orbit\./)
+})
+
+test('skill use counts come from grep | uniq, so history.jsonl may pass 4 MiB', async ($, on) => {
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [{ name: 'graphify', description: '', source: 'user' }] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('env.get', () => ({ value: HOME }))
+  on('fs.list', () => ({ value: [] }))
+  // A read of the history fails, as $.fs.read does over 4 MiB.
+  on('fs.read', (_, e) => {
+    if (e.path.endsWith('history.jsonl')) throw new Error('over 4 MiB')
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('process.run', (_, e) => ({
+    value: { exitCode: 0, stdout: e.argv[3] === 'count' ? '   7 "display":"/graphify\n   2 "display":"/exit\n' : '', stderr: '' },
+  }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: false })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  let text = ''
+  for (let i = 0; i < 50 && !/graphify.*7/.test(text); i++) text = await bodyText(ui)
+  expect(text).toMatch(/graphify\s+·\s+█+\s+7\s+│/)
+  expect(text).not.toMatch(/history\.jsonl/)
+  await ui.unmount()
+})

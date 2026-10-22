@@ -1,0 +1,15 @@
+{
+  "name": "armory",
+  "description": "Armory: a live 3D dashboard plugin for Claude Code",
+  "owner": {
+    "name": "ridzuan5757"
+  },
+  "plugins": [
+    {
+      "name": "armory",
+      "source": "./",
+      "description": "Live 3D dashboard for skills, jobs, memory and the files tools use, with mold, orbit and hive themes",
+      "version": "0.15.1"
+    }
+  ]
+}

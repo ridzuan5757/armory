@@ -1,0 +1,11 @@
+{
+  "name": "armory",
+  "version": "0.15.1",
+  "description": "Live 3D dashboard for skills, jobs, memory and the files tools use, with mold, orbit and hive themes",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "ridzuan5757"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/ridzuan5757/armory"
+}

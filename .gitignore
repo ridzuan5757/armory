@@ -1,0 +1,3 @@
+# Type files the engine lays beside a mod it loads.
+.claude-plugin/types/
+.DS_Store
