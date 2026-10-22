@@ -59,6 +59,12 @@ Then start a new session, or run `/reload-plugins`.
 In the split: drag to turn, pinch or scroll to zoom, put the pointer on an
 item to see its details.
 
+## Links beside the chat (optional, macOS)
+
+The [link router](link-router/README.md) opens the links you click in
+Ghostty as tabs in the Armory split. A rules list can keep chosen sites in
+your usual browser.
+
 ## Data
 
 Armory runs on your computer only. It sends nothing over the network.

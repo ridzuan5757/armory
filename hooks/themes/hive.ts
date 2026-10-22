@@ -316,17 +316,19 @@ export const HIVE: Theme = {
       if (g <= 0) continue;
       const heat = heatOf(n);
       const lit = !hover || near.has(n.id);
-      const fade = (n.dim && heat < 0.05 ? 0.55 : 1) * (lit ? 1 : 0.35) * (inFocus(n) ? 1 : 0.3) * n.fog;
+      const fade = (n.dim && heat < 0.05 ? 0.7 : 1) * (lit ? 1 : 0.35) * (inFocus(n) ? 1 : 0.3) * n.fog;
       const hub = n.kind === 'hub';
       // New wax grows out from the middle; a gone cell shrinks away. The
       // walls are the full cell; the body inside has the size of the data.
       const body = (cells.get(n.id).body || 0.8) * 0.92 * g;
       const pts = hexPath(n, body);
-      let fill = 0.12;
-      if (hub) fill = 0.5;
-      else if (n.kind === 'group') fill = 0.32;
-      else if (n.type === 'job') fill = n.live ? 0.5 : 0.28;
-      else if (n.type === 'memory') fill = 0.3;
+      // Fills are strong enough to read on the dark background, also when
+      // the terminal dims the split.
+      let fill = 0.28;
+      if (hub) fill = 0.75;
+      else if (n.kind === 'group') fill = 0.55;
+      else if (n.type === 'job') fill = n.live ? 0.7 : 0.45;
+      else if (n.type === 'memory') fill = 0.5;
       ctx.fillStyle = rgba(n.color, fill * fade);
       ctx.fill();
       // Honey: a skill cell fills from the bottom with its uses, and shines.
@@ -335,7 +337,7 @@ export const HIVE: Theme = {
         const level = Math.sqrt(n.data.uses / maxUse);
         ctx.save();
         ctx.clip();
-        ctx.fillStyle = rgba('#f5b94a', 0.75 * fade);
+        ctx.fillStyle = rgba('#f5b94a', 0.95 * fade);
         ctx.fillRect(n.sx - 40, lo - (lo - hi) * level, 80, (lo - hi) * level + 2);
         const shine = (t * 0.35 + n.phase) % 1;
         ctx.fillStyle = rgba('#fff4c8', 0.25 * hum * fade);
@@ -345,7 +347,7 @@ export const HIVE: Theme = {
       // Capped memory: a lighter wax cap inside the cell.
       if (n.type === 'memory') {
         hexPath(n, body * 0.6);
-        ctx.fillStyle = rgba('#f3e2b0', 0.22 * fade);
+        ctx.fillStyle = rgba('#f3e2b0', 0.4 * fade);
         ctx.fill();
       }
       // A used cell glows in the color of the use.
@@ -362,8 +364,8 @@ export const HIVE: Theme = {
       }
       // Wax walls; the queen cell has a heavy bright wall.
       hexPath(n, 0.98 * g);
-      ctx.strokeStyle = hub ? rgba(n.color, 0.95 * fade) : rgba('#d9b45a', (n.dim ? 0.25 : 0.5) * fade);
-      ctx.lineWidth = hub ? 2 : 1;
+      ctx.strokeStyle = hub ? rgba(n.color, fade) : rgba('#e3c06a', (n.dim ? 0.45 : 0.8) * fade);
+      ctx.lineWidth = hub ? 2.2 : 1.4;
       ctx.stroke();
       if (n.live && !calm) {
         const k = (t * 0.8 + n.phase) % 1;
