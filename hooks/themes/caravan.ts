@@ -17,7 +17,7 @@ export const CARAVAN: Theme = {
   legend: '',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
-  const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:memory', 'hub:sessions'];
+  const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:memory', 'hub:sessions', 'hub:usage'];
   function anchor(id) {
     const c = owner.get(id);
     return c ? tileCenter(c.q, c.r) : { x: 0, y: 0, z: 0 };

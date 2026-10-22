@@ -108,6 +108,7 @@ const HEAD = `<!doctype html>
   <span><i style="background:#e0a3ff"></i>sessions</span>
   <span><i style="background:#f0643c"></i>git</span>
   <span><i style="background:#3fd0b0"></i>mcp</span>
+  <span><i style="background:#9ad86a"></i>usage</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -116,7 +117,9 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0' };
+  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0', usage: '#9ad86a' };
+  // A fill from 0 to 100 %: green, then amber from 50, red from 80.
+  const fillColor = p => p >= 80 ? '#ff6b6b' : p >= 50 ? '#f5b94a' : '#7fd8a6';
   const MCP_STATUS = { connected: '#3fd0b0', auth: '#f5b94a', off: '#ff6b6b' };
   const CHANGE = { M: '#ff9a4d', A: '#5fd38d', '?': '#5fd38d', D: '#ff6b6b', R: '#7fd8ff' };
   const SESSION = { busy: '#ffcc66', idle: '#7fd8a6', shell: '#7fb2ff' };
@@ -427,6 +430,32 @@ const SHARED_A = `
       })), 450 + i * 40, step);
     });
 
+    // The USAGE colony: the rate-limit windows, this session's cost, and the
+    // context fill of each running session, linked to its SESSIONS house.
+    const use = s.usage || { limits: [], cost: 0, contexts: [] };
+    const five = use.limits.find(l => l.kind === 'five_hour');
+    node('hub:usage', { kind: 'hub', label: 'USAGE' + (five ? ' 5h ' + Math.round(five.percent) + '%' : ''), color: HUB.usage, r: 9 }, '', 0);
+    edge('hub:usage', 'hub:sessions', { w: 2.4, rest: 400, k: 0 }, 0);
+    edge('hub:usage', 'hub:skills', { w: 2, rest: 400, k: 0 }, 0);
+    const LIMIT = { five_hour: '5-hour limit', seven_day: '7-day limit', spend_limit: 'spend limit' };
+    branch('hub:usage', HUB.usage, [
+      ...use.limits.map(l => ({
+        id: 'limit:' + l.kind, w: 1 + 2 * Math.min(1, l.percent / 100), rest: 40,
+        props: { type: 'limit', data: l, label: (LIMIT[l.kind] || l.kind) + ' ' + Math.round(l.percent) + '%', color: fillColor(l.percent),
+          r: 3 + 4 * Math.min(1, l.percent / 100), live: l.percent >= 80, showLabel: true },
+      })),
+      ...(use.cost ? [{ id: 'cost:self', w: 1.2, rest: 40,
+        props: { type: 'cost', data: use, label: '$' + use.cost.toFixed(2) + ' this session', color: '#d8c86a', r: 3 + Math.min(4, Math.log1p(use.cost)), showLabel: true } }] : []),
+      ...use.contexts.map(c => ({
+        id: 'ctx:' + c.pid, w: 0.8 + 2 * Math.min(1, c.percent / 100), rest: 30,
+        props: { type: 'context', data: c, label: c.name + ' ' + c.percent + '%', color: fillColor(c.percent),
+          r: 2.6 + 4 * Math.min(1, c.percent / 100), showLabel: c.self || c.percent >= 50 },
+      })),
+    ], 150, step);
+    for (const c of use.contexts) {
+      edge('ctx:' + c.pid, 'session:' + c.pid, { w: 0.8, rest: 160, k: 0.004, link: true, rel: 'same', solid: true, color: HUB.usage }, step * 900);
+    }
+
     // One node per running session; a busy one pulses.
     branch('hub:sessions', HUB.sessions, sessions.map(x => ({
       id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
@@ -571,6 +600,16 @@ const SHARED_B = `
   function describe(n) {
     const d = n.data;
     if (n.kind === 'hub') return '<div class="k">hub</div><div class="n">' + esc(n.label) + '</div>';
+    if (n.type === 'limit') {
+      const at = d.resetsAt ? new Date(d.resetsAt) : undefined;
+      return '<div class="k">rate limit</div><div class="n">' + esc(n.label) + '</div>' +
+        (at ? '<div class="d">resets ' + esc(at.toLocaleString()) + '</div>' : '');
+    }
+    if (n.type === 'cost') return '<div class="k">cost</div><div class="n">$' + d.cost.toFixed(2) + '</div><div class="d">this session, as /cost counts it</div>';
+    if (n.type === 'context') {
+      return '<div class="k">context \u00b7 ' + esc(d.self ? 'this session' : d.model) + '</div><div class="n">' + esc(d.name) + '</div>' +
+        '<div class="d">' + Math.round(d.tokens / 1000) + 'k of ' + Math.round(d.window / 1000) + 'k tokens \u00b7 ' + d.percent + ' %</div>';
+    }
     if (n.type === 'mcp') {
       const what = { connected: 'connected', auth: 'needs a log-in', off: 'not connected' }[d.status] || d.status;
       return '<div class="k">mcp server \u00b7 ' + esc(d.scope) + ' \u00b7 ' + esc(d.type) + '</div><div class="n">' + esc(d.name) + '</div>' +

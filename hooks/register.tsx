@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileOp, FileRow, GitRepo, JobRow, McpRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch } from '../types'
+import type { FileOp, FileRow, GitRepo, JobRow, McpRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch, UsageRow } from '../types'
 
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
@@ -10,7 +10,7 @@ import { DEFAULT_THEME, THEMES, buildOf, dataScript, pageOf } from './web'
 
 const PANE = 'armory'
 const TITLE = 'Armory'
-const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], mcp: [], loadedAt: 0, errors: [] }
+const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], mcp: [], usage: { limits: [], cost: 0, contexts: [] }, loadedAt: 0, errors: [] }
 
 const tab = atom({ plugin: 'armory', key: 'tab' } as const, 'skills' as Tab)
 const snapshot = atom({ plugin: 'armory', key: 'snapshot' } as const, EMPTY)
@@ -381,6 +381,58 @@ async function loadMcp($: EngineInterface, home: string, cwd: string): Promise<M
   return [...rows.values()]
 }
 
+// The USAGE colony. For this session the engine gives the context fill, the
+// rate-limit windows and the cost. For each other running session, the last
+// usage block in its transcript gives its context: input, cache-read and
+// cache-written tokens together. A transcript can be tens of megabytes, so
+// tail reads only its end, and only again when the session's status changes;
+// only the numbers and the model name are kept, never the text.
+const TAIL = 262144
+const contextCache = new Map<number, { since: number; tokens: number; model: string }>()
+
+async function loadUsage($: EngineInterface, home: string, sessions: SessionRow[]): Promise<UsageRow> {
+  // A host with no usage figures gives no limits, no cost and an empty context.
+  const own = await $.session.usage().catch(() => undefined)
+  const window = own?.context.window || 200000
+  const contexts: UsageRow['contexts'] = []
+  for (const x of sessions) {
+    if (x.self) {
+      contexts.push({ pid: x.pid, name: x.name, tokens: own?.context.tokens ?? 0, window, percent: own?.context.percent ?? 0, model: 'this session', self: true })
+      continue
+    }
+    let c = contextCache.get(x.pid)
+    if (!c || c.since !== x.since) {
+      const cwd = x.cwd.startsWith('~') ? home + x.cwd.slice(1) : x.cwd
+      const file = `${home}/.claude/projects/${cwd.replace(/[^A-Za-z0-9]/g, '-')}/${x.id}.jsonl`
+      const out = await $.process.run(['tail', '-c', String(TAIL), file], { timeoutMs: 3000 }).catch(() => undefined)
+      c = { since: x.since, tokens: 0, model: '' }
+      for (const line of (out?.stdout ?? '').split('\n').reverse()) {
+        if (!line.includes('"usage"')) continue
+        try {
+          const m = (JSON.parse(line) as { message?: { usage?: Record<string, unknown>; model?: unknown } }).message
+          const u = m?.usage
+          if (!u) continue
+          const n = (k: string) => (typeof u[k] === 'number' ? (u[k] as number) : 0)
+          c = { since: x.since, tokens: n('input_tokens') + n('cache_read_input_tokens') + n('cache_creation_input_tokens'), model: typeof m?.model === 'string' ? m.model : '' }
+          break
+        } catch {
+          // The first line of the tail is cut; skip it.
+        }
+      }
+      contextCache.set(x.pid, c)
+    }
+    // Past 200k tokens the model has a 1M window; below that, count against
+    // this session's window.
+    const w = c.tokens > 200000 ? Math.max(window, 1000000) : window
+    contexts.push({ pid: x.pid, name: x.name, tokens: c.tokens, window: w, percent: Math.round((100 * c.tokens) / w), model: c.model, self: false })
+  }
+  return {
+    limits: (own?.rateLimits ?? []).map(l => ({ kind: l.kind, percent: l.percentUsed, resetsAt: l.resetsAt ?? '' })),
+    cost: Math.round((own?.cost?.usd ?? 0) * 100) / 100,
+    contexts,
+  }
+}
+
 // Records an MCP tool call (its name and time; never the arguments), then
 // loads the MCP colony again soon. Calls in one burst share one load.
 let mcpPending = false
@@ -443,21 +495,23 @@ async function loadSessions($: EngineInterface, home: string): Promise<SessionRo
     .sort((a, b) => a.pid - b.pid)
 }
 
-// Other sessions, git and MCP servers change while this one is idle (a
-// commit runs in Bash, which lights no file; a server connects late), so a
-// timer checks them and writes the page data only when something changed.
+// Other sessions, git, MCP servers and usage change while this one is idle
+// (a commit runs in Bash, which lights no file; a server connects late), so
+// a timer checks them and writes the page data only when something changed.
 let sessionTimer: { cancel: () => void } | undefined
 async function checkSessions($: EngineInterface) {
   const home = (await $.env.get('HOME')) ?? ''
   const cwd = await read($, cwdAtom)
   const [sessions, git, mcp] = await Promise.all([
     loadSessions($, home), loadGit($, home, cwd).catch(() => undefined), loadMcp($, home, cwd).catch(() => undefined)])
+  const usage = await loadUsage($, home, sessions).catch(() => undefined)
   const before = await read($, snapshot)
   const same = JSON.stringify(before.sessions) === JSON.stringify(sessions)
   const sameGit = !git || JSON.stringify(before.git) === JSON.stringify(git)
   const sameMcp = !mcp || JSON.stringify(before.mcp) === JSON.stringify(mcp)
-  if (same && sameGit && sameMcp) return
-  const next = await update($, snapshot, s => ({ ...s, sessions, git: git ?? s.git, mcp: mcp ?? s.mcp }))
+  const sameUsage = !usage || JSON.stringify(before.usage) === JSON.stringify(usage)
+  if (same && sameGit && sameMcp && sameUsage) return
+  const next = await update($, snapshot, s => ({ ...s, sessions, git: git ?? s.git, mcp: mcp ?? s.mcp, usage: usage ?? s.usage }))
   if (web.isOn) await writeData($, next, 1000)
 }
 
@@ -505,7 +559,8 @@ async function refresh($: EngineInterface) {
     loadGit($, home, cwd).catch(err => (errors.push(`git: ${String(err)}`), [])),
     loadMcp($, home, cwd).catch(err => (errors.push(`mcp: ${String(err)}`), [])),
   ])
-  const next = { skills, jobs, memory, files, sessions, git, mcp, loadedAt: Date.now(), errors }
+  const usage = await loadUsage($, home, sessions).catch(err => (errors.push(`usage: ${String(err)}`), EMPTY.usage))
+  const next = { skills, jobs, memory, files, sessions, git, mcp, usage, loadedAt: Date.now(), errors }
   await update($, snapshot, () => next)
   if (web.isOn) await writeData($, next, 1000)
 }
