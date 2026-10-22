@@ -65,6 +65,16 @@ export type ScheduleRow = {
   tasks: { id: string; type: string; status: string; description: string }[]
   at: number
 }
+// This machine: CPU use over all cores (0 to 100), used and total memory and
+// disk in bytes, and the processes that use the most CPU now (name only,
+// never arguments; cpu in % of one core, mem in bytes).
+export type MachineRow = {
+  cpu: number
+  cores: number
+  memory: { used: number; total: number }
+  disk: { used: number; total: number }
+  top: { name: string; cpu: number; mem: number }[]
+}
 export type Snapshot = {
   skills: SkillRow[]
   jobs: JobRow[]
@@ -76,6 +86,7 @@ export type Snapshot = {
   usage: UsageRow
   plugins: PluginRow[]
   schedule: ScheduleRow
+  machine: MachineRow
   loadedAt: number
   errors: string[]
 }

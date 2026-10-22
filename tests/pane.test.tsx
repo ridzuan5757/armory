@@ -560,3 +560,48 @@ test('plugins come from the install list, and the schedule from the end of a tur
   ])
   expect(pages.at(-1)).not.toContain('SECRET')
 })
+
+test('the machine colony reads cpu, memory, disk and the top processes', async ($, on) => {
+  const pages: string[] = []
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  const out = [
+    '10', '34359738368', '@@',
+    'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+    'Pages free:                                    43845.',
+    'Pages active:                                 800000.',
+    'Pages wired down:                             200000.',
+    'Pages occupied by compressor:                 100000.',
+    '@@',
+    '/dev/disk3s1   482797652 342654376 111296236    76% 4206852 1112962360    0%   /System/Volumes/Data',
+    '@@',
+    ' 42.7 142992 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer',
+    '150.0 1234992 /Users/u/.local/bin/claude',
+    '  0.0   1024 /sbin/launchd',
+    ' 12.3  51200 ghostty',
+  ].join('\n')
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' && e.argv[3] === 'machine' ? out : e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', (_, e) => { throw new Error(`ENOENT ${e.path}`) })
+  on('fs.list', () => ({ value: [] }))
+  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  const page = pages.at(-1) ?? ''
+  const machine = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot.machine
+  expect(machine).toEqual({
+    cpu: 21, cores: 10,
+    memory: { used: 1100000 * 16384, total: 34359738368 },
+    disk: { used: 342654376 * 1024, total: 482797652 * 1024 },
+    top: [
+      { name: 'claude', cpu: 150, mem: 1234992 * 1024 },
+      { name: 'WindowServer', cpu: 43, mem: 142992 * 1024 },
+      { name: 'ghostty', cpu: 12, mem: 51200 * 1024 },
+      { name: 'launchd', cpu: 0, mem: 1024 * 1024 },
+    ],
+  })
+})

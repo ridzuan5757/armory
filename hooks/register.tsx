@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileOp, FileRow, GitRepo, JobRow, McpRow, MemoryRow, PluginRow, ScheduleRow, SessionRow, SkillRow, Snapshot, Tab, Touch, UsageRow } from '../types'
+import type { FileOp, FileRow, GitRepo, JobRow, MachineRow, McpRow, MemoryRow, PluginRow, ScheduleRow, SessionRow, SkillRow, Snapshot, Tab, Touch, UsageRow } from '../types'
 
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
@@ -10,7 +10,8 @@ import { DEFAULT_THEME, THEMES, buildOf, dataScript, pageOf } from './web'
 
 const PANE = 'armory'
 const TITLE = 'Armory'
-const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], mcp: [], usage: { limits: [], cost: 0, contexts: [] }, plugins: [], schedule: { crons: [], tasks: [], at: 0 }, loadedAt: 0, errors: [] }
+const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], mcp: [], usage: { limits: [], cost: 0, contexts: [] }, plugins: [], schedule: { crons: [], tasks: [], at: 0 },
+  machine: { cpu: 0, cores: 1, memory: { used: 0, total: 0 }, disk: { used: 0, total: 0 }, top: [] }, loadedAt: 0, errors: [] }
 
 const tab = atom({ plugin: 'armory', key: 'tab' } as const, 'skills' as Tab)
 const snapshot = atom({ plugin: 'armory', key: 'snapshot' } as const, EMPTY)
@@ -433,6 +434,43 @@ async function loadUsage($: EngineInterface, home: string, sessions: SessionRow[
   }
 }
 
+// The MACHINE colony: CPU, memory and disk of this Mac, from ps, vm_stat,
+// sysctl and df in one shell run (about 40 ms). CPU is the sum of every
+// process's %CPU over the cores; memory used is active, wired and compressed
+// pages, as Activity Monitor counts it; disk is the data volume. The top five
+// processes by CPU keep only their name, never their arguments.
+const MACHINE = `sysctl -n hw.ncpu hw.memsize
+echo @@
+vm_stat
+echo @@
+df -k /System/Volumes/Data 2>/dev/null | tail -1 || df -k / | tail -1
+echo @@
+ps -A -o %cpu=,rss=,comm=`
+
+async function loadMachine($: EngineInterface): Promise<MachineRow> {
+  const out = await $.process.run(['sh', '-c', MACHINE, 'machine'], { timeoutMs: 3000 })
+  return parseMachine(out.stdout)
+}
+
+export function parseMachine(text: string): MachineRow {
+  const [sys = '', vm = '', df = '', ps = ''] = text.split(/^@@$/m)
+  const [cores = 1, total = 0] = sys.trim().split(/\s+/).map(Number)
+  const page = Number(/page size of (\d+) bytes/.exec(vm)?.[1] ?? 4096)
+  const pages = (label: string) => Number(new RegExp(`${label}:\\s+(\\d+)`).exec(vm)?.[1] ?? 0)
+  const used = (pages('Pages active') + pages('Pages wired down') + pages('Pages occupied by compressor')) * page
+  const d = df.trim().split(/\s+/)
+  const procs = ps.split('\n').map(line => /^\s*([\d.]+)\s+(\d+)\s+(.+)$/.exec(line)).filter((m): m is RegExpExecArray => !!m)
+    .map(m => ({ cpu: Number(m[1]), mem: Number(m[2]) * 1024, name: (m[3] ?? '').trim().split('/').pop() ?? '' }))
+  const cpu = procs.reduce((sum, p) => sum + p.cpu, 0) / Math.max(1, cores)
+  return {
+    cpu: Math.min(100, Math.round(cpu)),
+    cores: cores || 1,
+    memory: { used: Math.min(used, total), total },
+    disk: { used: Number(d[2] ?? 0) * 1024, total: Number(d[1] ?? 0) * 1024 },
+    top: procs.sort((a, b) => b.cpu - a.cpu).slice(0, 5).map(p => ({ name: p.name, cpu: Math.round(p.cpu), mem: p.mem })),
+  }
+}
+
 // The PLUGINS colony: each installed plugin with its marketplace, scope,
 // version and last update. No install paths leave the file.
 async function loadPlugins($: EngineInterface, home: string): Promise<PluginRow[]> {
@@ -528,7 +566,7 @@ async function loadSessions($: EngineInterface, home: string): Promise<SessionRo
     .sort((a, b) => a.pid - b.pid)
 }
 
-// Other sessions, git, MCP servers and usage change while this one is idle
+// Other sessions, git, MCP servers, usage and the machine change while this one is idle
 // (a commit runs in Bash, which lights no file; a server connects late), so
 // a timer checks them and writes the page data only when something changed.
 let sessionTimer: { cancel: () => void } | undefined
@@ -538,13 +576,15 @@ async function checkSessions($: EngineInterface) {
   const [sessions, git, mcp] = await Promise.all([
     loadSessions($, home), loadGit($, home, cwd).catch(() => undefined), loadMcp($, home, cwd).catch(() => undefined)])
   const usage = await loadUsage($, home, sessions).catch(() => undefined)
+  const machine = await loadMachine($).catch(() => undefined)
   const before = await read($, snapshot)
   const same = JSON.stringify(before.sessions) === JSON.stringify(sessions)
   const sameGit = !git || JSON.stringify(before.git) === JSON.stringify(git)
   const sameMcp = !mcp || JSON.stringify(before.mcp) === JSON.stringify(mcp)
   const sameUsage = !usage || JSON.stringify(before.usage) === JSON.stringify(usage)
-  if (same && sameGit && sameMcp && sameUsage) return
-  const next = await update($, snapshot, s => ({ ...s, sessions, git: git ?? s.git, mcp: mcp ?? s.mcp, usage: usage ?? s.usage }))
+  const sameMachine = !machine || JSON.stringify(before.machine) === JSON.stringify(machine)
+  if (same && sameGit && sameMcp && sameUsage && sameMachine) return
+  const next = await update($, snapshot, s => ({ ...s, sessions, git: git ?? s.git, mcp: mcp ?? s.mcp, usage: usage ?? s.usage, machine: machine ?? s.machine }))
   if (web.isOn) await writeData($, next, 1000)
 }
 
@@ -595,7 +635,8 @@ async function refresh($: EngineInterface) {
   const usage = await loadUsage($, home, sessions).catch(err => (errors.push(`usage: ${String(err)}`), EMPTY.usage))
   const plugins = await loadPlugins($, home).catch(err => (errors.push(`plugins: ${String(err)}`), []))
   const schedule = (await read($, snapshot)).schedule ?? EMPTY.schedule
-  const next = { skills, jobs, memory, files, sessions, git, mcp, usage, plugins, schedule, loadedAt: Date.now(), errors }
+  const machine = await loadMachine($).catch(err => (errors.push(`machine: ${String(err)}`), EMPTY.machine))
+  const next = { skills, jobs, memory, files, sessions, git, mcp, usage, plugins, schedule, machine, loadedAt: Date.now(), errors }
   await update($, snapshot, () => next)
   if (web.isOn) await writeData($, next, 1000)
 }
