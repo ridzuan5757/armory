@@ -107,6 +107,7 @@ const HEAD = `<!doctype html>
   <span><i style="background:#e8ecd8"></i>files</span>
   <span><i style="background:#e0a3ff"></i>sessions</span>
   <span><i style="background:#f0643c"></i>git</span>
+  <span><i style="background:#3fd0b0"></i>mcp</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -115,7 +116,8 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c' };
+  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0' };
+  const MCP_STATUS = { connected: '#3fd0b0', auth: '#f5b94a', off: '#ff6b6b' };
   const CHANGE = { M: '#ff9a4d', A: '#5fd38d', '?': '#5fd38d', D: '#ff6b6b', R: '#7fd8ff' };
   const SESSION = { busy: '#ffcc66', idle: '#7fd8a6', shell: '#7fb2ff' };
   const OP = { read: '#7fd8ff', write: '#ff9a4d', new: '#5fd38d' };
@@ -153,9 +155,9 @@ const SHARED_A = `
   const nodes = new Map(), edges = new Map();
   let alpha = 1, gen = 0, firstLoad = true;
   // Focus: after an event, the camera goes to the colony where it happened.
-  let focus, fresh = [], lastFileAt = 0;
+  let focus, note, stay, fresh = [], lastFileAt = 0;
   const jobStates = new Map(), sessionStates = new Map();
-  const FOCUS_MS = 6000, HANDS_OFF_MS = 8000;
+  const FOCUS_MS = 6000, HANDS_OFF_MS = 8000, MAP_HOLD_MS = 30000;
   const cam = { x: 0, y: 0, z: 0, s: 1, r: 300 };
 
   function node(id, props, parent, delay) {
@@ -313,8 +315,22 @@ const SHARED_A = `
       const up = gone && [...edges.values()].find(e => e.b === gone.id && !e.link);
       if (up) { target = up.a; why = 'removed · ' + gone.label; }
     }
-    if (!target || performance.now() - view.idle < HANDS_OFF_MS) return;
-    focus = { id: target, why, until: performance.now() + FOCUS_MS };
+    // After the person moves a map, events wait MAP_HOLD_MS before they move
+    // the camera; the label still names them. A focus on one colony lasts
+    // FOCUS_MS before an event in another colony takes the camera, so the
+    // view does not jump between colonies.
+    if (!target) return;
+    const t = performance.now();
+    const colonyOf = id => { const n = nodes.get(id); return n && (n.kind === 'hub' ? n.id : n.colony); };
+    const held = t - view.idle < (MAP ? MAP_HOLD_MS : HANDS_OFF_MS);
+    const busy = MAP && focus && t < focus.since + FOCUS_MS && colonyOf(focus.id) !== colonyOf(target);
+    if (held || busy) {
+      if (MAP) note = { why, until: t + FOCUS_MS };
+      return;
+    }
+    focus = { id: target, why, since: t, until: t + FOCUS_MS };
+    // On a map the camera stays on this area after the focus ends.
+    if (MAP) stay = focus;
   }
 
   // How much a node glows: full when a tool used it, gone after GLOW_MS.
@@ -392,6 +408,25 @@ const SHARED_A = `
       }
     });
 
+    // The MCP colony: one group per server, colored by its status, with the
+    // tools this session called as leaves that glow on use.
+    const servers = s.mcp || [];
+    const up = servers.filter(m => m.status === 'connected').length;
+    node('hub:mcp', { kind: 'hub', label: 'MCP ' + up + '/' + servers.length, color: HUB.mcp, r: 9 }, '', 0);
+    edge('hub:mcp', 'hub:git', { w: 2, rest: 400, k: 0 }, 0);
+    edge('hub:mcp', 'hub:jobs', { w: 2, rest: 400, k: 0 }, 0);
+    servers.forEach((m, i) => {
+      const id = 'mcp:' + m.name, last = m.used.reduce((a, u) => Math.max(a, u.at), 0);
+      node(id, { kind: 'group', type: 'mcp', data: m, label: m.name, color: MCP_STATUS[m.status], r: 3.5 + Math.min(3, Math.sqrt(m.tools) / 2),
+        dim: m.status !== 'connected', at: last, op: last ? 'read' : '' }, 'hub:mcp', step * (250 + i * 40));
+      edge('hub:mcp', id, { w: 0.8 + Math.min(2.4, m.tools / 12), rest: 60, k: 0.08 }, step * (100 + i * 40));
+      branch(id, MCP_STATUS[m.status], m.used.map(u => ({
+        id: 'mcptool:' + m.name + '/' + u.tool, w: 0.8 + Math.min(1.6, Math.log1p(u.uses) / 2), rest: 22,
+        props: { type: 'mcptool', data: Object.assign({ server: m.name }, u), label: u.tool, color: HUB.mcp, at: u.at, op: 'read',
+          r: 2.4 + Math.min(3, Math.log1p(u.uses)), showLabel: true },
+      })), 450 + i * 40, step);
+    });
+
     // One node per running session; a busy one pulses.
     branch('hub:sessions', HUB.sessions, sessions.map(x => ({
       id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
@@ -461,7 +496,8 @@ const SHARED_B = `
   // zoom stays the same while the network turns.
   const view = { yaw: 0.3, pitch: 0.2, vyaw: 0, vpitch: 0, zoom: 1, idle: 0, auto: 0, px: 0, py: 0, vpx: 0, vpy: 0 };
   const MAP = typeof MAP_VIEW === 'undefined' ? undefined : MAP_VIEW;
-  if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; }
+  // A map starts with no recent input, so the first events move the camera.
+  if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; view.idle = -MAP_HOLD_MS; }
   const DIST = 1600, TOP = 56, BOTTOM = 44, SIDE = 24;
   // With a focus, only the colony of the focus counts, and the center moves
   // halfway to the node itself. The camera eases there and back.
@@ -470,9 +506,11 @@ const SHARED_B = `
     const now = performance.now();
     if (focus && (now > focus.until || !nodes.has(focus.id))) focus = undefined;
     const label = document.getElementById('focus');
-    const text = focus ? '◎ ' + focus.why : '';
+    const text = focus ? '◎ ' + focus.why : note && now < note.until ? '\u2022 ' + note.why : '';
     if (label.textContent !== text) label.textContent = text;
-    const target = focus && nodes.get(focus.id);
+    // A map keeps the area of its last focus (stay) until Home.
+    if (stay && !nodes.has(stay.id)) stay = undefined;
+    const target = (focus || stay) && nodes.get((focus || stay).id);
     const colony = target && (target.kind === 'hub' ? target.id : target.colony);
     // A theme can give the bounds of its whole world, for the view at rest.
     const whole = !colony && typeof fitBounds === 'function' ? fitBounds() : undefined;
@@ -533,6 +571,16 @@ const SHARED_B = `
   function describe(n) {
     const d = n.data;
     if (n.kind === 'hub') return '<div class="k">hub</div><div class="n">' + esc(n.label) + '</div>';
+    if (n.type === 'mcp') {
+      const what = { connected: 'connected', auth: 'needs a log-in', off: 'not connected' }[d.status] || d.status;
+      return '<div class="k">mcp server \u00b7 ' + esc(d.scope) + ' \u00b7 ' + esc(d.type) + '</div><div class="n">' + esc(d.name) + '</div>' +
+        '<div class="d">' + esc(what) + (d.tools ? ' \u00b7 ' + d.tools + ' tools' : '') + '</div>' +
+        (d.used.length ? '<div class="d">used here: ' + d.used.map(u => esc(u.tool) + ' \u00d7' + u.uses).join(', ') + '</div>' : '');
+    }
+    if (n.type === 'mcptool') {
+      const age = Math.round((Date.now() - d.at) / 1000);
+      return '<div class="k">mcp tool \u00b7 ' + esc(d.server) + '</div><div class="n">' + esc(d.tool) + '</div><div class="d">' + d.uses + ' calls \u00b7 last ' + age + ' s ago</div>';
+    }
     if (n.type === 'repo') {
       const share = d.changes.length ? Math.round(100 * d.mine / d.changes.length) : 0;
       return '<div class="k">repo \u00b7 ' + esc(d.branch) + '</div><div class="n">' + esc(d.root) + '</div>' +
@@ -647,6 +695,8 @@ const SHARED_B = `
     addEventListener('keydown', ev => {
       const z = { '+': 1.25, '=': 1.25, '-': 0.8 }[ev.key];
       if (z) { ev.preventDefault(); touch(); zoomAt(z, W / 2, (H + TOP - BOTTOM) / 2); return; }
+      // Home or 0: back to the whole map at once.
+      if (ev.key === 'Home' || ev.key === '0') { ev.preventDefault(); view.zoom = 1; view.px = view.py = view.vpx = view.vpy = 0; focus = stay = undefined; return; }
       const k = KEYS[ev.key];
       if (!k) return;
       ev.preventDefault();
@@ -686,15 +736,15 @@ const SHARED_B = `
   function frame(now) {
     requestAnimationFrame(frame);
     const spin = Math.abs(view.vyaw) + Math.abs(view.vpitch) > 0.0005;
-    // After 4 s with no input (20 s on a map), the network turns slowly; the
+    // After 4 s with no input, the network turns slowly (a map stays); the
     // speed eases in.
     // It stops while the pointer is on a node, so the tooltip stays put.
-    const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > (MAP ? 20000 : 4000);
+    const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > 4000;
     view.auto = idle ? Math.min(1, view.auto + 0.02) : 0;
     const busy = alpha > 0.004 || drag || turn || spin || Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || focus || view.auto > 0 || now - lastData < 1500;
     if (now - last < (busy ? 33 : calm ? 1000 : 66)) return;
     last = now;
-    if (view.auto > 0) {
+    if (view.auto > 0 && !MAP) {
       if (AUTO_TURN) view.yaw += 0.0035 * view.auto;
       // The zoom goes slowly back to the size that fits the pane.
       view.zoom += (1 - view.zoom) * 0.012 * view.auto;
@@ -706,8 +756,11 @@ const SHARED_B = `
       if (!turn) {
         movePan(view.vpx, view.vpy);
         view.vpx *= 0.8; view.vpy *= 0.8;
-        const back = view.auto > 0 ? 0.012 * view.auto : focus ? 0.05 : 0;
+        // A focus brings the camera to its area: the person's pan and zoom
+        // ease out. A map never goes back to the whole view by itself.
+        const back = focus ? 0.05 : 0;
         view.px -= view.px * back; view.py -= view.py * back;
+        view.zoom += (1 - view.zoom) * back;
       }
     }
     if (!turn && spin) {

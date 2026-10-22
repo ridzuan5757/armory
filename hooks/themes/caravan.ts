@@ -17,7 +17,7 @@ export const CARAVAN: Theme = {
   legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · famous volcanoes grow, erupt and cool; the nearest one erupts at each write · earthquakes on the plate faults leave rifts, rivers and new hills · 1 hour = 1 year: each season brings floods, tornadoes, wildfires, droughts, storms or blizzards that slow the horses · clouds follow the wind belts · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
-  const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:jobs', 'hub:memory', 'hub:sessions'];
+  const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:memory', 'hub:sessions'];
   function anchor(id) {
     const c = owner.get(id);
     return c ? tileCenter(c.q, c.r) : { x: 0, y: 0, z: 0 };

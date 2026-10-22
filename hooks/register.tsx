@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileOp, FileRow, GitRepo, JobRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch } from '../types'
+import type { FileOp, FileRow, GitRepo, JobRow, McpRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch } from '../types'
 
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
@@ -10,13 +10,15 @@ import { DEFAULT_THEME, THEMES, buildOf, dataScript, pageOf } from './web'
 
 const PANE = 'armory'
 const TITLE = 'Armory'
-const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], loadedAt: 0, errors: [] }
+const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], mcp: [], loadedAt: 0, errors: [] }
 
 const tab = atom({ plugin: 'armory', key: 'tab' } as const, 'skills' as Tab)
 const snapshot = atom({ plugin: 'armory', key: 'snapshot' } as const, EMPTY)
 const cwdAtom = atom({ plugin: 'armory', key: 'cwd' } as const, '')
 // Files the tools of this session used, by absolute path.
 const touchedAtom = atom({ plugin: 'armory', key: 'touched' } as const, {} as Record<string, Touch>)
+// MCP tools this session called, by full tool name: the last time and count.
+const mcpUsedAtom = atom({ plugin: 'armory', key: 'mcpUsed' } as const, {} as Record<string, { at: number; uses: number }>)
 
 
 const LINK = /\[\[([^\]]+)\]\]/g
@@ -311,6 +313,89 @@ export function parseGit(text: string, root: string, show: (path: string) => str
   }
 }
 
+// The MCP colony. The config files give the servers that should be there:
+// ~/.claude.json (user scope, and the local scope of the session folder) and
+// <folder>/.mcp.json (project scope). Only each server's name, transport type
+// and scope are read; env, args, headers and url can hold secrets and stay
+// in the file. The tools the model has now give the servers that connected
+// (mcp__<server>__<tool>; a server name in a tool name has each character
+// outside [A-Za-z0-9_-] as _). A server with only its log-in tools needs a
+// log-in; a configured server with no tools did not connect. The colony
+// shows only servers you use: the connected ones, the ones in your config,
+// and the claude.ai connectors you connected before (claudeAiMcpEverConnected
+// in ~/.claude.json); a default connector you never connected is left out.
+const mcpKey = (name: string) => name.replace(/[^A-Za-z0-9_-]/g, '_')
+const AUTH_TOOL = /^(authenticate|complete_authentication)$/
+
+async function loadMcp($: EngineInterface, home: string, cwd: string): Promise<McpRow[]> {
+  const names = (o: unknown) => Object.entries((o ?? {}) as Record<string, { type?: unknown }>)
+    .map(([name, v]) => ({ name, type: typeof v?.type === 'string' ? v.type : 'stdio' }))
+  const configured: { name: string; scope: string; type: string }[] = []
+  let ever: string[] = []
+  try {
+    const user = JSON.parse(await $.fs.read(`${home}/.claude.json`)) as {
+      mcpServers?: unknown; projects?: Record<string, { mcpServers?: unknown }>; claudeAiMcpEverConnected?: unknown }
+    for (const s of names(user.mcpServers)) configured.push({ ...s, scope: 'user' })
+    for (const s of names(user.projects?.[cwd]?.mcpServers)) configured.push({ ...s, scope: 'local' })
+    if (Array.isArray(user.claudeAiMcpEverConnected)) ever = user.claudeAiMcpEverConnected.filter((n): n is string => typeof n === 'string')
+  } catch {
+    // No user config: only the project file and the live tools.
+  }
+  try {
+    const project = JSON.parse(await $.fs.read(`${cwd}/.mcp.json`)) as { mcpServers?: unknown }
+    for (const s of names(project.mcpServers)) configured.push({ ...s, scope: 'project' })
+  } catch {
+    // No project file.
+  }
+  const tools = new Map<string, string[]>()
+  for (const t of await $.tool.list().catch(() => [])) {
+    const m = /^mcp__(.+?)__(.+)$/.exec(t.name)
+    if (!t.mcp || !m?.[1] || !m[2]) continue
+    tools.set(m[1], [...(tools.get(m[1]) ?? []), m[2]])
+  }
+  const used = await read($, mcpUsedAtom)
+  const rows = new Map<string, McpRow>()
+  const row = (key: string, name: string, scope: string, type: string): McpRow => {
+    const list = tools.get(key) ?? []
+    const real = list.filter(t => !AUTH_TOOL.test(t))
+    return {
+      name, scope, type,
+      status: real.length ? 'connected' : list.length ? 'auth' : 'off',
+      tools: real.length,
+      used: Object.entries(used).filter(([tool]) => tool.startsWith(`mcp__${key}__`))
+        .map(([tool, u]) => ({ tool: tool.slice(`mcp__${key}__`.length), at: u.at, uses: u.uses }))
+        .sort((a, b) => b.at - a.at).slice(0, 12),
+    }
+  }
+  for (const c of configured) if (!rows.has(mcpKey(c.name))) rows.set(mcpKey(c.name), row(mcpKey(c.name), c.name, c.scope, c.type))
+  // The claude.ai connectors connected before, even when gone or logged out.
+  for (const name of ever) if (!rows.has(mcpKey(name))) rows.set(mcpKey(name), row(mcpKey(name), name, 'claude.ai', 'http'))
+  // Other connected servers: claude.ai connectors and plugins. One with only
+  // its log-in tools that was never connected is a default: left out.
+  for (const key of tools.keys()) {
+    if (rows.has(key)) continue
+    const name = key.startsWith('claude_ai_') ? `claude.ai ${key.slice(10).replace(/_/g, ' ')}` : key.startsWith('plugin_') ? key.slice(7) : key
+    const r = row(key, name, key.startsWith('claude_ai_') ? 'claude.ai' : key.startsWith('plugin_') ? 'plugin' : 'other', 'http')
+    if (r.status === 'connected') rows.set(key, r)
+  }
+  return [...rows.values()]
+}
+
+// Records an MCP tool call (its name and time; never the arguments), then
+// loads the MCP colony again soon. Calls in one burst share one load.
+let mcpPending = false
+async function usedMcp($: EngineInterface, tool: string) {
+  await update($, mcpUsedAtom, u => ({ ...u, [tool]: { at: Date.now(), uses: (u[tool]?.uses ?? 0) + 1 } }))
+  if (mcpPending) return
+  mcpPending = true
+  await $.clock.sleep(300)
+  mcpPending = false
+  const home = (await $.env.get('HOME')) ?? ''
+  const mcp = await loadMcp($, home, await read($, cwdAtom))
+  const next = await update($, snapshot, s => ({ ...s, mcp }))
+  if (web.isOn) await writeData($, next, 1000)
+}
+
 // Passes a tool's result on and, when the call ran without error, lights its
 // file. A refused or failed call lights nothing.
 function lit<R extends { deny?: string; isError?: boolean }>($: EngineInterface, ran: R, path: unknown, op: FileOp) {
@@ -358,19 +443,21 @@ async function loadSessions($: EngineInterface, home: string): Promise<SessionRo
     .sort((a, b) => a.pid - b.pid)
 }
 
-// Other sessions and git change while this one is idle (a commit runs in
-// Bash, which lights no file), so a timer checks them and writes the page
-// data only when something changed.
+// Other sessions, git and MCP servers change while this one is idle (a
+// commit runs in Bash, which lights no file; a server connects late), so a
+// timer checks them and writes the page data only when something changed.
 let sessionTimer: { cancel: () => void } | undefined
 async function checkSessions($: EngineInterface) {
   const home = (await $.env.get('HOME')) ?? ''
   const cwd = await read($, cwdAtom)
-  const [sessions, git] = await Promise.all([loadSessions($, home), loadGit($, home, cwd).catch(() => undefined)])
+  const [sessions, git, mcp] = await Promise.all([
+    loadSessions($, home), loadGit($, home, cwd).catch(() => undefined), loadMcp($, home, cwd).catch(() => undefined)])
   const before = await read($, snapshot)
   const same = JSON.stringify(before.sessions) === JSON.stringify(sessions)
   const sameGit = !git || JSON.stringify(before.git) === JSON.stringify(git)
-  if (same && sameGit) return
-  const next = await update($, snapshot, s => ({ ...s, sessions, git: git ?? s.git }))
+  const sameMcp = !mcp || JSON.stringify(before.mcp) === JSON.stringify(mcp)
+  if (same && sameGit && sameMcp) return
+  const next = await update($, snapshot, s => ({ ...s, sessions, git: git ?? s.git, mcp: mcp ?? s.mcp }))
   if (web.isOn) await writeData($, next, 1000)
 }
 
@@ -409,15 +496,16 @@ async function refresh($: EngineInterface) {
   const home = (await $.env.get('HOME')) ?? ''
   const cwd = await read($, cwdAtom)
   const errors: string[] = []
-  const [skills, jobs, memory, files, sessions, git] = await Promise.all([
+  const [skills, jobs, memory, files, sessions, git, mcp] = await Promise.all([
     loadSkills($, home, errors).catch(err => (errors.push(`skills: ${String(err)}`), [])),
     loadJobs($, home, errors),
     loadMemory($, home, cwd, errors),
     loadFiles($, home, cwd).catch(err => (errors.push(`files: ${String(err)}`), [])),
     loadSessions($, home).catch(err => (errors.push(`sessions: ${String(err)}`), [])),
     loadGit($, home, cwd).catch(err => (errors.push(`git: ${String(err)}`), [])),
+    loadMcp($, home, cwd).catch(err => (errors.push(`mcp: ${String(err)}`), [])),
   ])
-  const next = { skills, jobs, memory, files, sessions, git, loadedAt: Date.now(), errors }
+  const next = { skills, jobs, memory, files, sessions, git, mcp, loadedAt: Date.now(), errors }
   await update($, snapshot, () => next)
   if (web.isOn) await writeData($, next, 1000)
 }
@@ -739,6 +827,14 @@ export const register: Register = on => {
     return lit($, await next(e), e.file_path, existed ? 'write' : 'new')
   }).catch(($, e, next) => next(e))
   on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => lit($, await next(e), e.notebook_path, 'write')).catch(($, e, next) => next(e))
+  // Every MCP tool call lights its server and tool on the MCP colony.
+  on('tool.call', async ($, e, next) => {
+    const ran = await next(e)
+    const tool = String(e.tool)
+    if (tool.startsWith('mcp__') && ran.deny === undefined) void usedMcp($, tool).catch(() => undefined)
+
+    return ran
+  }).catch(($, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)

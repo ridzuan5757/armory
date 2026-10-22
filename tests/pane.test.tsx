@@ -408,3 +408,57 @@ test('the git colony reads the session folder repo and the repos below it', asyn
     commits: [{ hash: 'abc1234', subject: 'Add the app' }],
   }, { root: 'lib', name: 'lib', branch: 'dev', upstream: false, ahead: 0, behind: 0, changes: [], commits: [] }])
 })
+
+test('the mcp colony shows used servers only, and keeps secrets out', async ($, on) => {
+  const clock = mock.clock(on)
+  const pages: string[] = []
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', (_, e) => {
+    if (e.path === `${HOME}/.claude.json`) {
+      return { value: JSON.stringify({
+        mcpServers: { lab: { type: 'stdio', command: 'lab', env: { TOKEN: 'SECRET-TOKEN' } }, down: { type: 'http', url: 'https://SECRET-URL' } },
+        projects: { '/work': { mcpServers: { local1: { command: 'x', args: ['SECRET-ARG'] } } } },
+        claudeAiMcpEverConnected: ['claude.ai Slack'],
+      }) }
+    }
+    if (e.path === '/work/.mcp.json') return { value: JSON.stringify({ mcpServers: { 'team.docs': { type: 'sse', headers: { Authorization: 'SECRET-HEADER' } } } }) }
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  on('tool.list', () => ({ value: [
+    { name: 'Read', description: '', mcp: false },
+    { name: 'mcp__lab__run', description: '', mcp: true },
+    { name: 'mcp__lab__stop', description: '', mcp: true },
+    { name: 'mcp__team_docs__authenticate', description: '', mcp: true },
+    { name: 'mcp__claude_ai_Gmail__create_draft', description: '', mcp: true },
+    // Connected before, logged out now: needs a log-in. Never connected: left out.
+    { name: 'mcp__claude_ai_Slack__authenticate', description: '', mcp: true },
+    { name: 'mcp__claude_ai_Asana__authenticate', description: '', mcp: true },
+    { name: 'mcp__claude_ai_Asana__complete_authentication', description: '', mcp: true },
+  ] }))
+  on('tool.call', () => ({ result: {} }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  await $.tool.call({ tool: 'mcp__lab__run', job: 'SECRET-ARGUMENT' })
+  await clock.advance(300)
+  const page = pages.at(-1) ?? ''
+  const mcp = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot.mcp
+  expect(mcp.map((m: { name: string; scope: string; type: string; status: string; tools: number }) => [m.name, m.scope, m.type, m.status, m.tools])).toEqual([
+    ['lab', 'user', 'stdio', 'connected', 2],
+    ['down', 'user', 'http', 'off', 0],
+    ['local1', 'local', 'stdio', 'off', 0],
+    ['team.docs', 'project', 'sse', 'auth', 0],
+    ['claude.ai Slack', 'claude.ai', 'http', 'auth', 0],
+    ['claude.ai Gmail', 'claude.ai', 'http', 'connected', 1],
+  ])
+  expect(mcp[0].used.map((u: { tool: string; uses: number }) => [u.tool, u.uses])).toEqual([['run', 1]])
+  expect(page).not.toContain('SECRET')
+})

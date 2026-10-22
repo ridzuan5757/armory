@@ -32,6 +32,19 @@ export type GitRepo = {
   changes: GitChange[]
   commits: { hash: string; subject: string }[]
 }
+// An MCP server: from the config files (name, transport type and scope only;
+// never env, args, headers or url) and from the tools the model has now.
+// status: connected (it has tools), auth (only its log-in tools), off (in the
+// config, but no tools: it did not connect). used lists the tools this
+// session called, with the last time; never their arguments.
+export type McpRow = {
+  name: string
+  scope: string
+  type: string
+  status: 'connected' | 'auth' | 'off'
+  tools: number
+  used: { tool: string; at: number; uses: number }[]
+}
 export type Snapshot = {
   skills: SkillRow[]
   jobs: JobRow[]
@@ -39,12 +52,13 @@ export type Snapshot = {
   files: FileRow[]
   sessions: SessionRow[]
   git: GitRepo[]
+  mcp: McpRow[]
   loadedAt: number
   errors: string[]
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    armory: { tab: Tab; snapshot: Snapshot; cwd: string; touched: Record<string, Touch> }
+    armory: { tab: Tab; snapshot: Snapshot; cwd: string; touched: Record<string, Touch>; mcpUsed: Record<string, { at: number; uses: number }> }
   }
 }
