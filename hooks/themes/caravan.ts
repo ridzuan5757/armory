@@ -13,7 +13,7 @@ import { HORSE_KIT } from './horse'
 
 export const CARAVAN: Theme = {
   name: 'caravan',
-  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · 1 hour = 1 year: each season brings floods, wildfires, storms, blizzards or earthquakes that slow the horses · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
+  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · 1 hour = 1 year: each season brings floods, wildfires, storms, blizzards or earthquakes that slow the horses · clouds follow the wind belts · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
   const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:jobs', 'hub:memory', 'hub:sessions'];
@@ -849,20 +849,61 @@ export const CARAVAN: Theme = {
     }
   }
 
-  // Clouds drift over the map from west to east, with soft shadows below.
+  // Wind follows the Earth's belts: trade winds blow west between the
+  // equator and 30 degrees, the westerlies blow east from 30 to 60 degrees,
+  // and the polar easterlies blow west above 60. The belts move up to 8
+  // degrees north in the northern summer and south in its winter.
+  const beltShift = () => 8 * Math.sin(2 * Math.PI * (calendar().frac - 0.125));
+  function windAt(lat) {
+    const a = Math.abs(lat - beltShift());
+    return a < 30 ? -1 : a < 60 ? 1.3 : -0.7;
+  }
+  const latToY = lat => TILE * 1.5 * ((80 - lat) / 140 * ROWS - 0.5) - OY;
+
+  // Clouds ride the wind of their latitude, and their band moves with the
+  // belts. They are larger where the season brings rain: mid-latitude
+  // winters and tropical summers (the monsoon). Faint streaks on the sea
+  // show the wind. Storms and blizzards have their own dark clouds.
+  const CLOUD_LATS = [-48, -40, -22, -14, -6, 4, 10, 18, 26, 38, 44, 50, 56, 66];
+  const clouds = CLOUD_LATS.map((lat, i) => ({ lat, x: (hash('cx' + i) * 2 - 1) * OX, r: 2 + 2 * hash('cr' + i) }));
+  let cloudT = 0;
   function drawClouds(t) {
-    const w = OX + TILE * 6;
-    for (let i = 0; i < 10; i++) {
-      const sx = ((hash('cx' + i) * 2 - 1) * w + t * (4 + 3 * hash('cv' + i)) + w * 3) % (2 * w) - w;
-      const sy = (hash('cy' + i) * 2 - 1) * OY * 0.9;
-      const shade = screen(sx + 10, sy + 14, 0), top = screen(sx, sy, 60);
-      const r = TILE * (2.2 + 2 * hash('cr' + i));
-      pen.fillStyle = 'rgba(0,0,0,0.07)';
-      pen.beginPath(); pen.ellipse(shade.x, shade.y, r * shade.f * 1.4, r * shade.f * 0.6, 0, 0, 6.2832); pen.fill();
-      pen.fillStyle = 'rgba(240,244,248,0.16)';
-      for (const [dx, dy, s] of [[-0.6, 0.1, 0.7], [0, -0.15, 1], [0.6, 0.1, 0.75]]) {
-        pen.beginPath(); pen.ellipse(top.x + dx * r * top.f, top.y + dy * r * top.f, r * top.f * s, r * top.f * s * 0.55, 0, 0, 6.2832); pen.fill();
+    const w = OX + TILE * 6, dt = cloudT ? Math.min(0.2, t - cloudT) : 0, cal = calendar(), shift = beltShift();
+    cloudT = t;
+    if (!calm) {
+      // Wind streaks: short dashes that move with the wind, on the sea.
+      pen.lineWidth = 1;
+      for (let i = 0; i < 26; i++) {
+        const lat = 70 - (i % 13) * 10.5 + hash('sl' + i) * 4, v = windAt(lat);
+        const x = ((hash('sx' + i) * 2 - 1) * w + v * t * 10 + 8 * w) % (2 * w) - w, y = latToY(lat);
+        const k = tiles.get(tileAt(x, y));
+        if (!k || !WET[k.terrain]) continue;
+        const a = screen(x, y, 0), b = screen(x + v * TILE * 1.6, y, 0);
+        pen.strokeStyle = 'rgba(214,236,248,0.22)';
+        pen.beginPath(); pen.moveTo(a.x, a.y); pen.lineTo(b.x, b.y); pen.stroke();
       }
+    }
+    clouds.forEach((c, i) => {
+      const lat = c.lat + shift, v = windAt(lat);
+      c.x = ((c.x + v * (5 + 3 * hash('cv' + i)) * dt) + 3 * w) % (2 * w) - w;
+      const local = seasonAt(lat, cal.season), a = Math.abs(lat);
+      const wet = (local === 3 && a > 30 && a < 62) || (local === 1 && a < 25);
+      const r = TILE * c.r * (wet ? 1.45 : 0.85);
+      drawCloud(c.x, latToY(lat), r, wet ? 0.22 : 0.13, '240,244,248');
+    });
+    for (const d of active) {
+      if (d.kind !== 'storm' && d.kind !== 'blizzard') continue;
+      const c = tileCenter(d.q, d.r), fade = Math.max(0, Math.min(1, (worldNow() - d.start) / 4000, (d.end - worldNow()) / 4000));
+      drawCloud(c.x, c.y - TILE, TILE * (2 + d.radius), 0.3 * fade, d.kind === 'storm' ? '120,128,140' : '220,228,236');
+    }
+  }
+  function drawCloud(x, y, r, alpha, rgb) {
+    const shade = screen(x + 10, y + 14, 0), top = screen(x, y, 60);
+    pen.fillStyle = 'rgba(0,0,0,' + (alpha * 0.45) + ')';
+    pen.beginPath(); pen.ellipse(shade.x, shade.y, r * shade.f * 1.4, r * shade.f * 0.6, 0, 0, 6.2832); pen.fill();
+    pen.fillStyle = 'rgba(' + rgb + ',' + alpha + ')';
+    for (const [dx, dy, s] of [[-0.6, 0.1, 0.7], [0, -0.15, 1], [0.6, 0.1, 0.75]]) {
+      pen.beginPath(); pen.ellipse(top.x + dx * r * top.f, top.y + dy * r * top.f, r * top.f * s, r * top.f * s * 0.55, 0, 0, 6.2832); pen.fill();
     }
   }
 
