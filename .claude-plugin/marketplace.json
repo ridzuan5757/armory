@@ -9,7 +9,7 @@
       "name": "armory",
       "source": "./",
       "description": "Live 3D dashboard for skills, jobs, memory and the files tools use, git, MCP servers, usage, plugins, schedules and this machine, with mold, orbit, hive and caravan themes",
-      "version": "0.40.1"
+      "version": "0.43.1"
     }
   ]
 }

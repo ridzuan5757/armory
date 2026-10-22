@@ -52,7 +52,12 @@ Armory has four themes:
 - **Machine**: the CPU, memory and disk of this Mac, every 5 s. Each one
   has one small tile per 5 % of use, so the colony grows and shrinks with
   the load; the five processes that use the most CPU hang under CPU (name
-  only). These changes never move the camera.
+  only), and a temperature group: the thermal state (Apple's public API) and
+  the hottest CPU, GPU and storage sensors in °C. The sensors come from a
+  small Swift helper (`hooks/temp.swift`) that Armory compiles once with
+  `swiftc` into `~/.claude/armory/bin`; it reads Apple's private IOKit HID
+  sensor API, so a macOS update can stop it (then only the state shows).
+  These changes never move the camera.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and
@@ -87,6 +92,9 @@ Then start a new session, or run `/reload-plugins`.
 | `/armory web` | Opens the dashboard split for this session. |
 | `/armory theme` | Shows the current theme and the list of themes. |
 | `/armory theme <name>` | Changes the theme. The choice is kept for new sessions. |
+| `/armory view` | Shows the caravan view (flat or globe). |
+| `/armory view <flat\|globe>` | Shows caravan as a flat map or a turning globe. The choice is kept for new sessions; `G` in the split also switches. |
+| `/armory world <full\|simple>` | `simple` turns off the caravan time, seasons, disasters, tectonics, volcanoes and clouds: only the map, colonies and horses stay (lighter). Kept for new sessions. |
 | `/armory close` | Closes the split. |
 | `/armory` | Opens the text pane in the terminal. |
 | `/armory stress <hz> <seconds> <raster\|web\|both>` | Runs a speed test. |
@@ -102,7 +110,11 @@ use + and - to zoom. When work happens, the camera goes to that colony
 and stays there; it never goes back to the whole map by itself. For 30 s
 after you move the map, events only name themselves at the top. Home or 0
 shows the whole map again. Put the pointer on a volcano, a disaster or an
-earthquake to see its name, cost and time left.
+earthquake to see its name, cost and time left. In the globe view the same
+world wraps on a sphere: drag to turn it, pinch to zoom; an event turns its
+colony to the front, and the globe turns slowly for a few minutes after it. To stay
+light, the map draws at most 10 frames a second at rest, and after 30 s with
+no input and no event it sleeps at 1 frame a second until something happens.
 
 ## Links beside the chat (optional, macOS)
 

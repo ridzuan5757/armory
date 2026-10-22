@@ -127,7 +127,12 @@ export const HORSE_KIT = `
 
   // Projects a world point that is not a node.
   const tp = { x: 0, y: 0, z: 0 };
-  function screenRaw(x, y, z) { tp.x = x; tp.y = y; tp.z = z; project(tp); return { x: tp.sx, y: tp.sy, f: tp.sf, fog: tp.fog, depth: tp.depth }; }
+  function screenRaw(x, y, z) {
+    // caravan's globe view has its own projection.
+    if (typeof GLOBE !== 'undefined' && GLOBE.on) return globeScreen(x, y, z);
+    tp.x = x; tp.y = y; tp.z = z; project(tp);
+    return { x: tp.sx, y: tp.sy, f: tp.sf, fog: tp.fog, depth: tp.depth };
+  }
   // On a map that wraps (caravan gives nearX), the copy nearest the view.
   function screen(x, y, z) { return screenRaw(typeof nearX === 'function' ? nearX(x) : x, y, z); }
 

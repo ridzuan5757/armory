@@ -449,7 +449,58 @@ ps -A -o %cpu=,rss=,comm=`
 
 async function loadMachine($: EngineInterface): Promise<MachineRow> {
   const out = await $.process.run(['sh', '-c', MACHINE, 'machine'], { timeoutMs: 3000 })
-  return parseMachine(out.stdout)
+  const row = parseMachine(out.stdout)
+  const temp = await loadTemp($).catch(() => undefined)
+  return temp ? { ...row, temp } : row
+}
+
+// Temperatures come from a small Swift helper (hooks/temp.swift): the
+// thermal state from Apple's public API, and the sensors from the private
+// IOKit HID API. On first use it compiles in the background into
+// ~/.claude/armory/bin, named by a hash of its source, so a changed helper
+// compiles again. Until it is ready, or with no swiftc, there is no
+// temperature and no error.
+const tempBin = { path: '', state: 'new' as 'new' | 'building' | 'ready' | 'none' }
+async function loadTemp($: EngineInterface) {
+  if (tempBin.state === 'new') {
+    tempBin.state = 'building'
+    void (async () => {
+      const home = (await $.env.get('HOME')) ?? ''
+      const src = `${$.plugin.root}/hooks/temp.swift`
+      const text = await $.fs.read(src)
+      let h = 0
+      for (let i = 0; i < text.length; i++) h = (Math.imul(h, 31) + text.charCodeAt(i)) | 0
+      const dir = `${home}/.claude/armory/bin`, bin = `${dir}/armory-temp-${(h >>> 0).toString(16)}`
+      if (!(await $.fs.exists(bin).catch(() => false))) {
+        await $.process.run(['mkdir', '-p', dir], { timeoutMs: 3000 })
+        const made = await $.process.run(['swiftc', '-O', src, '-o', bin, '-framework', 'IOKit'], { timeoutMs: 120000 })
+        if (made.exitCode !== 0) throw new Error('swiftc failed')
+      }
+      tempBin.path = bin
+      tempBin.state = 'ready'
+    })().catch(() => { tempBin.state = 'none' })
+  }
+  if (tempBin.state !== 'ready') return undefined
+  const out = await $.process.run([tempBin.path], { timeoutMs: 3000 })
+  return parseTemp(out.stdout)
+}
+
+// CPU dies are PMU tdie* (and pACC/eACC on some chips), GPU sensors PMU TP*g
+// or GPU*, storage NAND*.
+export function parseTemp(text: string): NonNullable<MachineRow['temp']> {
+  const d = JSON.parse(text) as { state?: unknown; sensors?: { name?: unknown; c?: unknown }[] }
+  const sensors = (d.sensors ?? []).filter(s => typeof s.name === 'string' && typeof s.c === 'number') as { name: string; c: number }[]
+  const max = (re: RegExp) => sensors.filter(s => re.test(s.name)).reduce((m, s) => Math.max(m, s.c), 0)
+  const best = new Map<string, number>()
+  for (const s of sensors) best.set(s.name, Math.max(best.get(s.name) ?? 0, s.c))
+  return {
+    state: typeof d.state === 'string' ? d.state : 'nominal',
+    cpu: max(/tdie|[pe]ACC/i),
+    gpu: max(/TP\d+g|GPU/i),
+    ssd: max(/NAND/i),
+    max: sensors.reduce((m, s) => Math.max(m, s.c), 0),
+    top: [...best].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, c]) => ({ name, c })),
+  }
 }
 
 export function parseMachine(text: string): MachineRow {
@@ -643,7 +694,7 @@ async function refresh($: EngineInterface) {
 
 // The web page and the last Raster size live only in this process; a reload
 // starts them over, and /armory web turns the page on again.
-const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME, page: '' }
+const web = { isOn: false, dir: '', seq: 0, pane: undefined as string | undefined, theme: DEFAULT_THEME, view: 'flat', world: 'full', page: '' }
 let mounted: { columns: number; rows: number; tab: Tab } | undefined
 
 async function writeData($: EngineInterface, snap: Snapshot, pollMs: number) {
@@ -651,7 +702,7 @@ async function writeData($: EngineInterface, snap: Snapshot, pollMs: number) {
   // on disk must be the current one first, or it would reload without end.
   if (web.page !== buildOf(web.theme)) await writePage($)
   web.seq++
-  await $.fs.write(`${web.dir}/data.js`, dataScript(snap, web.seq, pollMs, web.theme))
+  await $.fs.write(`${web.dir}/data.js`, dataScript(snap, web.seq, pollMs, web.theme, web.view, web.world))
 }
 
 // Each session has its own folder for the page and its data, named like the
@@ -672,6 +723,8 @@ async function openWeb($: EngineInterface, isFallbackOk = true) {
   }
   web.dir = dir
   web.theme = await themeOf($)
+  web.view = await viewOf($)
+  web.world = await worldOf($)
   await writePage($)
   web.isOn = true
   await writeData($, await read($, snapshot), 1000)
@@ -720,6 +773,43 @@ async function themeOf($: EngineInterface) {
   const saved = await $.store.get('theme').catch(() => undefined)
 
   return typeof saved === 'string' && saved in THEMES ? saved : DEFAULT_THEME
+}
+
+// The view of a map theme (caravan): flat, or a turning globe. Kept for new
+// sessions; the page reads it from the data.
+const VIEWS = ['flat', 'globe']
+async function viewOf($: EngineInterface) {
+  const saved = await $.store.get('view').catch(() => undefined)
+
+  return typeof saved === 'string' && VIEWS.includes(saved) ? saved : 'flat'
+}
+async function setView($: EngineInterface, name: string) {
+  if (!name) return `View: ${await viewOf($)}. Views: ${VIEWS.join(', ')} (caravan). Change it with /armory view <name>, or press G in the split.`
+  if (!VIEWS.includes(name)) return `No view named ${name}. Views: ${VIEWS.join(', ')}.`
+  await $.store.set('view', name)
+  web.view = name
+  if (web.isOn) await writeData($, await read($, snapshot), 1000)
+
+  return `Armory view: ${name}.`
+}
+
+// The world of a map theme (caravan): full (time, seasons, disasters,
+// tectonics, volcano cycles, clouds) or simple (none of them). Kept for new
+// sessions; the page reads it from the data.
+const WORLDS = ['full', 'simple']
+async function worldOf($: EngineInterface) {
+  const saved = await $.store.get('world').catch(() => undefined)
+
+  return typeof saved === 'string' && WORLDS.includes(saved) ? saved : 'full'
+}
+async function setWorld($: EngineInterface, name: string) {
+  if (!name) return `World: ${await worldOf($)}. Worlds: ${WORLDS.join(', ')} (caravan). Change it with /armory world <name>.`
+  if (!WORLDS.includes(name)) return `No world named ${name}. Worlds: ${WORLDS.join(', ')}.`
+  await $.store.set('world', name)
+  web.world = name
+  if (web.isOn) await writeData($, await read($, snapshot), 1000)
+
+  return `Armory world: ${name}.`
 }
 
 // Saves the theme and rewrites the page. An open split sees the new theme
@@ -934,6 +1024,8 @@ export const register: Register = on => {
     }
     if (verb === 'results') return { text: await results($) }
     if (verb === 'theme') return { text: await setTheme($, e.args.trim().split(/\s+/)[1] ?? '') }
+    if (verb === 'view') return { text: await setView($, e.args.trim().split(/\s+/)[1] ?? '') }
+    if (verb === 'world') return { text: await setWorld($, e.args.trim().split(/\s+/)[1] ?? '') }
     if (verb === 'close') {
       await closeWeb($)
       web.isOn = false
