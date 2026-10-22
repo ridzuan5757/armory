@@ -432,6 +432,8 @@ const SHARED_B = `
     if (label.textContent !== text) label.textContent = text;
     const target = focus && nodes.get(focus.id);
     const colony = target && (target.kind === 'hub' ? target.id : target.colony);
+    // A theme can give the bounds of its whole world, for the view at rest.
+    const whole = !colony && typeof fitBounds === 'function' ? fitBounds() : undefined;
     const list = [...nodes.values()].filter(n => !n.dying && (!colony || n.id === colony || n.colony === colony));
     let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
     for (const n of list) {
@@ -445,7 +447,9 @@ const SHARED_B = `
       cx = (cx + target.x) / 2; cy = (cy + target.y) / 2; cz = (cz + target.z) / 2;
       r = Math.max(150, r);
     }
-    const s = Math.min((W - 2 * SIDE) / (2 * r), (H - TOP - BOTTOM) / (2 * r), 2.4) * 1.12 * (DIST - r) / DIST;
+    if (whole) { cx = whole.x; cy = whole.y; cz = whole.z; r = whole.r; }
+    const s = whole ? Math.min((W - 2 * SIDE) / whole.w, (H - TOP - BOTTOM) / whole.h)
+      : Math.min((W - 2 * SIDE) / (2 * r), (H - TOP - BOTTOM) / (2 * r), 2.4) * 1.12 * (DIST - r) / DIST;
     const k = target ? 0.05 : 0.04;
     cam.s += (s - cam.s) * k; cam.x += (cx - cam.x) * k; cam.y += (cy - cam.y) * k;
     cam.z += (cz - cam.z) * k; cam.r += (r - cam.r) * k;
