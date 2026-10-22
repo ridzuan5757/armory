@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileOp, FileRow, JobRow, MemoryRow, SkillRow, Snapshot, Tab, Touch } from '../types'
+import type { FileOp, FileRow, JobRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch } from '../types'
 
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
@@ -10,7 +10,7 @@ import { DEFAULT_THEME, THEMES, dataScript, pageOf } from './web'
 
 const PANE = 'armory'
 const TITLE = 'Armory'
-const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], loadedAt: 0, errors: [] }
+const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], loadedAt: 0, errors: [] }
 
 const tab = atom({ plugin: 'armory', key: 'tab' } as const, 'skills' as Tab)
 const snapshot = atom({ plugin: 'armory', key: 'snapshot' } as const, EMPTY)
@@ -208,6 +208,57 @@ function lit<R extends { deny?: string; isError?: boolean }>($: EngineInterface,
   return ran
 }
 
+// The running sessions. Each Claude Code process keeps ~/.claude/sessions/
+// <pid>.json; a file whose process is gone is skipped. Only the fields below
+// are read: the folder also holds key files and messaging sockets, which
+// Armory never touches.
+async function loadSessions($: EngineInterface, home: string): Promise<SessionRow[]> {
+  const dir = `${home}/.claude/sessions`
+  const entries = await $.fs.list(dir).catch(() => [])
+  const rows: SessionRow[] = []
+  for (const e of entries) {
+    if (e.kind !== 'file' || !/^\d+\.json$/.test(e.name)) continue
+    try {
+      const d = JSON.parse(await $.fs.read(`${dir}/${e.name}`)) as Record<string, unknown>
+      if (typeof d.pid !== 'number' || typeof d.sessionId !== 'string') continue
+      const cwd = typeof d.cwd === 'string' ? d.cwd : ''
+      rows.push({
+        pid: d.pid,
+        id: d.sessionId,
+        name: typeof d.name === 'string' && d.name ? d.name : d.sessionId.slice(0, 8),
+        cwd: home && cwd.startsWith(home) ? `~${cwd.slice(home.length)}` : cwd,
+        status: typeof d.status === 'string' ? d.status : '?',
+        since: typeof d.statusUpdatedAt === 'number' ? d.statusUpdatedAt : 0,
+        self: false,
+      })
+    } catch {
+      // A file in the middle of a write: the next check reads it.
+    }
+  }
+  if (rows.length === 0) return rows
+  // One ps call tells which processes still run.
+  const ps = await $.process.run(['ps', '-o', 'pid=', '-p', rows.map(r => r.pid).join(',')]).catch(() => undefined)
+  const alive = new Set((ps?.stdout ?? '').split(/\s+/).filter(Boolean).map(Number))
+  const self = Number(await claudePidOf($))
+
+  return rows
+    .filter(r => alive.has(r.pid))
+    .map(r => ({ ...r, self: r.pid === self }))
+    .sort((a, b) => a.pid - b.pid)
+}
+
+// Other sessions change while this one is idle, so a timer checks them and
+// writes the page data only when something changed.
+let sessionTimer: { cancel: () => void } | undefined
+async function checkSessions($: EngineInterface) {
+  const home = (await $.env.get('HOME')) ?? ''
+  const sessions = await loadSessions($, home)
+  const before = await read($, snapshot)
+  if (JSON.stringify(before.sessions) === JSON.stringify(sessions)) return
+  const next = await update($, snapshot, s => ({ ...s, sessions }))
+  if (web.isOn) await writeData($, next, 1000)
+}
+
 // Records a file a tool used, then loads the FILES hub again soon. Calls in
 // one burst share one load.
 let filesPending = false
@@ -229,13 +280,14 @@ async function refresh($: EngineInterface) {
   const home = (await $.env.get('HOME')) ?? ''
   const cwd = await read($, cwdAtom)
   const errors: string[] = []
-  const [skills, jobs, memory, files] = await Promise.all([
+  const [skills, jobs, memory, files, sessions] = await Promise.all([
     loadSkills($, home, errors).catch(err => (errors.push(`skills: ${String(err)}`), [])),
     loadJobs($, home, errors),
     loadMemory($, home, cwd, errors),
     loadFiles($, home, cwd).catch(err => (errors.push(`files: ${String(err)}`), [])),
+    loadSessions($, home).catch(err => (errors.push(`sessions: ${String(err)}`), [])),
   ])
-  const next = { skills, jobs, memory, files, loadedAt: Date.now(), errors }
+  const next = { skills, jobs, memory, files, sessions, loadedAt: Date.now(), errors }
   await update($, snapshot, () => next)
   if (web.isOn) await writeData($, next, 1000)
 }
@@ -486,6 +538,8 @@ export const register: Register = on => {
     // An interactive terminal session opens the web page in a terminal-browser
     // split; without terminal-browser, the Raster pane opens in its place.
     // Background and headless sessions open nothing.
+    sessionTimer?.cancel()
+    sessionTimer = $.clock.every(5000, () => void checkSessions($).catch(() => undefined))
     if (e.isInteractive && e.surface === 'terminal') {
       void (async () => {
         await refresh($)

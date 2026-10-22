@@ -17,6 +17,8 @@ Armory has three themes:
 - **Skills**: your user and plugin commands, with use counts from your history.
 - **Jobs**: background jobs in `~/.claude/jobs`, by state.
 - **Memory**: the entries in your project memory, by group, with `[[links]]`.
+- **Sessions**: every Claude Code session that runs on this computer, with
+  its status (busy, idle, shell). A busy session pulses.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and
@@ -71,6 +73,9 @@ Armory runs on your computer only. It sends nothing over the network.
 
 - It reads `~/.claude/history.jsonl`, `~/.claude/jobs`, your project memory
   folder and the folders on the way to the files that tools use.
+- It reads the name, folder and status of each session from
+  `~/.claude/sessions/<pid>.json`, every 5 s. It does not read the key files
+  in that folder.
 - It writes the page for each session to `~/.claude/armory/web/<session>/`
   and deletes that folder when the session ends.
 
