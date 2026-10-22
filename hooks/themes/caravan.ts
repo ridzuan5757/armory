@@ -1,4 +1,4 @@
-// Theme 5, caravan: a world first, then the colonies on it. A diamond-square
+// Theme 4, caravan: a world first, then the colonies on it. A diamond-square
 // height map and a moisture map make one island continent with seas, beaches,
 // deserts, plains, grassland, forests, hills, mountains, snow peaks and a
 // volcano on the highest peak. Rivers flow from the heights to the sea. Each

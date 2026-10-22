@@ -4,14 +4,13 @@ A live dashboard for Claude Code. It shows your skills, background jobs,
 memory and the files that Claude works on, as a 3D scene in a split beside
 the chat.
 
-Armory has five themes:
+Armory has four themes:
 
 | Theme | Look |
 | --- | --- |
 | `mold` | A slime-mold network. Veins grow from four hubs, carry particles and fork. At rest, pulses run along the veins, the flow turns back and forth, and thin tendrils search outward. |
 | `orbit` | A solar system. Hubs are stars, items orbit their parents, and their children orbit them as moons. At rest, the bodies move under Newtonian gravity. |
 | `hive` | One honeycomb. Each item is a hex cell, and the size of its body comes from its data. Bees fly to the files that tools use. At rest, bees wander and dance. |
-| `race` | A racetrack with one lane per colony. Items are pennants along the lanes, and sad red horses gallop laps. A file use sends a horse to that post. |
 | `caravan` | The Earth as a hex map, from the [Natural Earth](https://www.naturalearthdata.com/) land outline (public domain). Fractal maps (diamond-square) give the height and the moisture, and the latitude gives the climate: ice and tundra near the poles, deserts near the tropics, jungle at the equator. It has seas, beaches, plains, grassland, forests, hills, mountains, snow peaks, rivers and a volcano that erupts at each file write. Each colony gets a city on good land and a territory that follows the terrain. Sad red horses plan routes over the terrain with A*, take boats over water and bring a red envelope to each file that a tool uses. |
 
 ## What it shows

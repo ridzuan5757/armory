@@ -1,6 +1,6 @@
-// Shared by the race and caravan themes: the sad red horse, the steering
-// that makes it glide, the hot file it swarms to, and its "deal with it"
-// shades. Plain page code, put in front of each theme's own script.
+// The horse kit for the caravan theme: the sad red horse, the hot file it
+// swarms to, and its "deal with it" shades. Plain page code, put in front
+// of the theme's own script.
 export const HORSE_KIT = `
   // The sad red horse, after the plush the person chose: a red body, a white
   // muzzle with a frown, a blue eye, a brown mane, tail and hooves, and a
@@ -125,49 +125,9 @@ export const HORSE_KIT = `
     return { x: target.x + Math.cos(a) * r, y: target.y + Math.sin(a) * r * 0.7, z: target.z + 4 };
   }
 
-  // Steering, as the hive bees: a spring to the goal, drag, a top speed and
-  // a sideways push that bends the path and fades near the end. A horse that
-  // reached a goal it should follow (follow) locks on to it.
-  const VMAX = 45;
-  function steer(h, goal, dt, follow) {
-    const dx = goal.x - h.x, dy = goal.y - h.y, dz = goal.z - h.z;
-    const dist = Math.hypot(dx, dy, dz);
-    const key = goal.key || '';
-    if (h.goalKey !== key) { h.goalKey = key; h.start = Math.max(dist, 1); h.locked = false; }
-    if (follow && (h.locked || dist < 1.5)) {
-      h.locked = true;
-      h.vx = (goal.x - h.x) / Math.max(dt, 0.001); h.vy = (goal.y - h.y) / Math.max(dt, 0.001); h.vz = 0;
-      h.x = goal.x; h.y = goal.y; h.z = goal.z;
-      return dist;
-    }
-    if (follow && dist < 10) {
-      h.x += dx * 0.25; h.y += dy * 0.25; h.z += dz * 0.25;
-      h.vx = dx * 0.25 / Math.max(dt, 0.001); h.vy = dy * 0.25 / Math.max(dt, 0.001);
-      return dist;
-    }
-    const k = 1.1 * (0.7 + 0.6 * h.seed), drag = 1.5;
-    const left = Math.min(1, dist / h.start);
-    const side = (h.seed > 0.5 ? 1 : -1) * 30 * (0.6 + h.seed) * left * left;
-    const nx = dist ? -dy / dist : 0, ny = dist ? dx / dist : 0;
-    h.vx += (dx * k - h.vx * drag + nx * side) * dt;
-    h.vy += (dy * k - h.vy * drag + ny * side) * dt;
-    h.vz += (dz * k - h.vz * drag) * dt;
-    const v = Math.hypot(h.vx, h.vy, h.vz);
-    if (v > VMAX) { h.vx *= VMAX / v; h.vy *= VMAX / v; h.vz *= VMAX / v; }
-    h.x += h.vx * dt; h.y += h.vy * dt; h.z += h.vz * dt;
-    return dist;
-  }
-
   // Projects a world point that is not a node.
   const tp = { x: 0, y: 0, z: 0 };
   function screen(x, y, z) { tp.x = x; tp.y = y; tp.z = z; project(tp); return { x: tp.sx, y: tp.sy, f: tp.sf, fog: tp.fog, depth: tp.depth }; }
-
-  // A flat theme faces the viewer at rest.
-  function faceFront(rest, yaw, pitch) {
-    if (rest <= 0) return;
-    const back = (to, at) => at + Math.atan2(Math.sin(to - at), Math.cos(to - at)) * 0.02 * rest;
-    view.yaw = back(yaw, view.yaw); view.pitch = back(pitch, view.pitch);
-  }
 
   // Draws a horse from its state: screen place, facing and gait.
   function paintHorse(h, t, fade, opts) {
