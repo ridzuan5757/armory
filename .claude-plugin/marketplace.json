@@ -9,7 +9,7 @@
       "name": "armory",
       "source": "./",
       "description": "Live 3D dashboard for skills, jobs, memory and the files tools use, with mold, orbit and hive themes",
-      "version": "0.15.2"
+      "version": "0.15.3"
     }
   ]
 }

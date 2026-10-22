@@ -45,18 +45,28 @@ if [ -f "$conf/link-rules" ]; then
   done < "$conf/link-rules"
 fi
 
-front=${ARMORY_LINK_FRONT:-$(lsappinfo info -only bundleid "$(lsappinfo front)" 2>/dev/null | sed -E 's/.*"([^"]*)"[^"]*$/\1/')}
+# lsappinfo prints several lines; the one we need is bundleID="...".
+front=${ARMORY_LINK_FRONT:-$(lsappinfo info -only bundleid "$(lsappinfo front)" 2>/dev/null | sed -nE 's/.*bundleID="([^"]*)".*/\1/p')}
 [ "$front" = com.mitchellh.ghostty ] || browser "clicked in $front"
 
-panes=${ARMORY_LINK_PANES:-$(osascript -e 'tell application "Ghostty" to get id of every terminal of selected tab of front window' 2>/dev/null)}
-key=$(terminal-browser ls --json 2>/dev/null | PANES="$panes" /usr/bin/python3 -c '
-import json, os, sys
+# Needs the Automation permission to control Ghostty; macOS asks the first time.
+panes=${ARMORY_LINK_PANES:-$(osascript -e 'tell application "Ghostty" to get id of every terminal of selected tab of front window' 2>"$conf/.ghostty-error")}
+[ -n "$panes" ] || browser "Ghostty did not answer: $(tr '\n' ' ' < "$conf/.ghostty-error")"
+# Each Armory session writes its split's key and Ghostty pane to split.json.
+# (terminal-browser ls lists only the browsers of the caller's terminal, and
+# this router runs outside any terminal.)
+key=$(PANES="$panes" /usr/bin/python3 -c '
+import glob, json, os
 panes = {p.strip() for p in os.environ["PANES"].split(",") if p.strip()}
-for b in json.load(sys.stdin).get("browsers", []):
-    if (b.get("pane") or {}).get("pane") in panes and any("armory-session=" in (t.get("url") or "") for t in b.get("tabs", [])):
-        print(b["key"]); break
+for f in glob.glob(os.path.expanduser("~/.claude/armory/web/*/split.json")):
+    try:
+        s = json.load(open(f))
+    except Exception:
+        continue
+    if s.get("pane") in panes:
+        print(s["key"]); break
 ' 2>/dev/null)
-[ -n "$key" ] || browser "no Armory split in this Ghostty tab"
+[ -n "$key" ] || browser "no Armory split in this Ghostty tab ($panes)"
 
 echo "$(date '+%F %T') split $key $url" >> "$log"
 if [ -n "$ARMORY_LINK_DRY" ]; then echo "split $key"; exit 0; fi

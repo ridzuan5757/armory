@@ -360,11 +360,16 @@ async function paneOf($: EngineInterface) {
   if (listed?.exitCode !== 0) return undefined
   try {
     const { browsers = [] } = JSON.parse(listed.stdout) as {
-      browsers?: { pane?: { pane?: string }; tabs?: { url?: string }[] }[]
+      browsers?: { key?: string; pane?: { pane?: string }; tabs?: { url?: string }[] }[]
     }
-    const pane = browsers.find(b => b.tabs?.some(t => t.url?.includes(signature)))?.pane?.pane
+    const split = browsers.find(b => b.tabs?.some(t => t.url?.includes(signature)))
+    const pane = split?.pane?.pane
+    if (!pane || !/^[A-F0-9-]+$/i.test(pane)) return undefined
+    // The link router reads this to open links in this split. It runs
+    // outside the terminal, where terminal-browser ls does not list it.
+    if (web.dir && split?.key) await $.fs.write(`${web.dir}/split.json`, `${JSON.stringify({ key: split.key, pane })}\n`)
 
-    return pane && /^[A-F0-9-]+$/i.test(pane) ? pane : undefined
+    return pane
   } catch {
     return undefined
   }

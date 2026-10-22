@@ -37,6 +37,19 @@ sh link-router/install.sh
 
 To give a fallback browser by bundle id: `sh link-router/install.sh org.mozilla.firefox`.
 
+The first time a link from Ghostty arrives, macOS may ask if "Armory Link
+Router" may control Ghostty. Allow it: the router asks Ghostty which
+terminals are in the front tab, to find the split of that tab.
+
+Your fallback browser is no longer the default browser, so it may ask to
+become the default again. In Firefox, clear "Always check if Firefox is your
+default browser" in Settings → General.
+
+The Armory plugin writes the key and pane of each split to
+`~/.claude/armory/web/<session>/split.json`. The router reads these files,
+because `terminal-browser ls` lists only the browsers of the terminal that
+runs it, and the router runs outside any terminal.
+
 ## Use
 
 - Edit `~/.config/armory/link-rules`: one host per line; `*.example.com`
