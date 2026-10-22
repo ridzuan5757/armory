@@ -505,7 +505,7 @@ const SHARED_A = `
     if (m && m.memory.total) {
       const gb = b => (b / 1073741824).toFixed(1) + ' GB';
       const memP = Math.round(100 * m.memory.used / m.memory.total), diskP = m.disk.total ? Math.round(100 * m.disk.used / m.disk.total) : 0;
-      node('hub:machine', { kind: 'hub', label: 'MACHINE CPU ' + m.cpu + '% \u00b7 MEM ' + memP + '%', color: HUB.machine, r: 9 }, '', 0);
+      node('hub:machine', { kind: 'hub', label: 'MACHINE CPU ' + m.cpu + '% \u00b7 MEM ' + memP + '%' + (m.temp && m.temp.max ? ' \u00b7 ' + Math.round(m.temp.max) + '\u00b0C' : ''), color: HUB.machine, r: 9 }, '', 0);
       edge('hub:machine', 'hub:usage', { w: 2, rest: 400, k: 0 }, 0);
       edge('hub:machine', 'hub:sessions', { w: 2, rest: 400, k: 0 }, 0);
       [['cpu', 'CPU', m.cpu, m.cores + ' cores'], ['mem', 'Memory', memP, gb(m.memory.used) + ' of ' + gb(m.memory.total)],
@@ -522,6 +522,24 @@ const SHARED_A = `
             props: { type: 'proc', data: t, label: t.name + ' ' + t.cpu + '%', color: '#7fb2ff', r: 2.4 + Math.min(4, t.cpu / 25), showLabel: true } })) : []),
         ], 450 + i * 60, step);
       });
+      // Temperature: one unit per 5 degrees above 30 (up to 14); the color
+      // follows the heat, and a thermal state past nominal turns it red.
+      if (m.temp && m.temp.max) {
+        const tp = m.temp, heat = Math.max(0, Math.min(100, (tp.max - 30) / 70 * 100));
+        const color = tp.state === 'nominal' ? fillColor(heat) : tp.state === 'fair' ? '#f5b94a' : '#ff6b6b';
+        const data = { name: 'Temperature', percent: Math.round(tp.max), detail: 'thermal state ' + tp.state + ' \u00b7 hottest ' +
+          tp.top.map(x => x.name + ' ' + x.c + '\u00b0C').join(', ') };
+        node('res:temp', { kind: 'group', type: 'temp', data: Object.assign({ state: tp.state }, data), label: 'Temp ' + Math.round(tp.max) + '\u00b0C',
+          color, r: 5.5, live: tp.state !== 'nominal' }, 'hub:machine', step * 430);
+        edge('hub:machine', 'res:temp', { w: 1 + 2.4 * heat / 100, rest: 60, k: 0.08 }, step * 280);
+        branch('res:temp', color, [
+          ...Array.from({ length: Math.min(14, Math.round(Math.max(0, tp.max - 30) / 5)) }, (_, u) => ({ id: 'res:temp/u' + u, w: 0.6, rest: 16,
+            props: { type: 'unit', data, label: '', color, r: 1.8, showLabel: false } })),
+          ...[['CPU', tp.cpu], ['GPU', tp.gpu], ['SSD', tp.ssd]].filter(([, c]) => c > 0).map(([name, c]) => ({ id: 'sensor:' + name, w: 1, rest: 24,
+            props: { type: 'unit', data: { name: name + ' temperature', percent: Math.round(c), detail: 'thermal state ' + tp.state }, label: name + ' ' + Math.round(c) + '\u00b0C',
+              color, r: 3, showLabel: true } })),
+        ], 630, step);
+      }
     }
 
     // One node per running session; a busy one pulses.
@@ -668,6 +686,9 @@ const SHARED_B = `
   function describe(n) {
     const d = n.data;
     if (n.kind === 'hub') return '<div class="k">hub</div><div class="n">' + esc(n.label) + '</div>';
+    if (n.type === 'temp' || (n.type === 'unit' && /temperature/i.test(d.name))) {
+      return '<div class="k">machine</div><div class="n">' + esc(d.name) + ' ' + d.percent + ' \u00b0C</div><div class="d">' + esc(d.detail) + '</div>';
+    }
     if (n.type === 'resource' || n.type === 'unit') {
       return '<div class="k">machine</div><div class="n">' + esc(d.name) + ' ' + d.percent + ' %</div><div class="d">' + esc(d.detail) + '</div>';
     }

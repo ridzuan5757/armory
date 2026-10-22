@@ -573,7 +573,8 @@ test('plugins come from the install list, and the schedule from the end of a tur
   expect(pages.at(-1)).not.toContain('SECRET')
 })
 
-test('the machine colony reads cpu, memory, disk and the top processes', async ($, on) => {
+test('the machine colony reads cpu, memory, disk, the top processes and temperatures', async ($, on) => {
+  const clock = mock.clock(on)
   const pages: string[] = []
   on('command.register', () => ({ value: { command: 'armory' } }))
   on('command.list', () => ({ value: [] }))
@@ -594,17 +595,33 @@ test('the machine colony reads cpu, memory, disk and the top processes', async (
     '  0.0   1024 /sbin/launchd',
     ' 12.3  51200 ghostty',
   ].join('\n')
-  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' && e.argv[3] === 'machine' ? out : e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
-  on('fs.read', (_, e) => { throw new Error(`ENOENT ${e.path}`) })
+  const temp = JSON.stringify({ state: 'fair', sensors: [
+    { name: 'PMU tdie4', c: 56 }, { name: 'PMU tdie4', c: 55.9 }, { name: 'PMU tdie1', c: 53.2 },
+    { name: 'PMU TP3g', c: 61.5 }, { name: 'NAND CH0 temp', c: 41 }, { name: 'PMU tcal', c: 52 },
+  ] })
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: String(e.argv[0]).includes('/armory-temp-') ? temp
+    : e.argv[0] === 'sh' && e.argv[3] === 'machine' ? out : e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', (_, e) => {
+    if (e.path.endsWith('/hooks/temp.swift')) return { value: 'print(1)' }
+    throw new Error(`ENOENT ${e.path}`)
+  })
   on('fs.list', () => ({ value: [] }))
-  on('fs.exists', () => ({ value: false }))
+  // The compiled helper is there already: no swiftc run.
+  on('fs.exists', (_, e) => ({ value: e.path.includes('/armory-temp-') }))
   on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 
   await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
   await $.command.run({ command: 'armory', args: 'web' })
+  // The helper is found in the background; the next 5 s check reads it.
+  await clock.advance(5000)
   const page = pages.at(-1) ?? ''
   const machine = JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot.machine
+  expect(machine.temp).toEqual({
+    state: 'fair', cpu: 56, gpu: 61.5, ssd: 41, max: 61.5,
+    top: [{ name: 'PMU TP3g', c: 61.5 }, { name: 'PMU tdie4', c: 56 }, { name: 'PMU tdie1', c: 53.2 }, { name: 'PMU tcal', c: 52 }],
+  })
+  delete machine.temp
   expect(machine).toEqual({
     cpu: 21, cores: 10,
     memory: { used: 1100000 * 16384, total: 34359738368 },
@@ -617,3 +634,4 @@ test('the machine colony reads cpu, memory, disk and the top processes', async (
     ],
   })
 })
+

@@ -52,7 +52,12 @@ Armory has four themes:
 - **Machine**: the CPU, memory and disk of this Mac, every 5 s. Each one
   has one small tile per 5 % of use, so the colony grows and shrinks with
   the load; the five processes that use the most CPU hang under CPU (name
-  only). These changes never move the camera.
+  only), and a temperature group: the thermal state (Apple's public API) and
+  the hottest CPU, GPU and storage sensors in °C. The sensors come from a
+  small Swift helper (`hooks/temp.swift`) that Armory compiles once with
+  `swiftc` into `~/.claude/armory/bin`; it reads Apple's private IOKit HID
+  sensor API, so a macOS update can stop it (then only the state shows).
+  These changes never move the camera.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and

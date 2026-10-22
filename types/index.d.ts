@@ -74,6 +74,10 @@ export type MachineRow = {
   memory: { used: number; total: number }
   disk: { used: number; total: number }
   top: { name: string; cpu: number; mem: number }[]
+  // From the temperature helper: the thermal state (nominal, fair, serious,
+  // critical), the hottest CPU, GPU and storage sensor in degrees C (0 when
+  // none), the hottest of all, and the hottest few sensors by name.
+  temp?: { state: string; cpu: number; gpu: number; ssd: number; max: number; top: { name: string; c: number }[] }
 }
 export type Snapshot = {
   skills: SkillRow[]
