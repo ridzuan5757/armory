@@ -84,7 +84,8 @@ game, and it wraps around at 180° like the Earth (routes take the short way
 across the Pacific); up and down, it moves until a pole edge is at the middle
 of the pane: drag with the mouse or with two fingers, or use the arrow keys (or
 WASD), to move the map. Pinch to zoom to the point under the pointer, or
-use + and - to zoom.
+use + and - to zoom. The camera stays where you put it for 5 minutes (an
+event only names itself at the top); Home or 0 shows the whole map again.
 
 ## Links beside the chat (optional, macOS)
 
