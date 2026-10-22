@@ -53,9 +53,12 @@ export const CARAVAN: Theme = {
 
   // Terrain from a fixed pattern of the tile's place: smooth enough that
   // forests and hills come in patches. Water and mountains only in open land.
-  function terrainOf(q, r, open) {
+  function heightOf(q, r) {
     const p = tileCenter(q, r);
-    const v = Math.sin(p.x * 0.021 + 1.3) * Math.cos(p.y * 0.024 - 0.7) + 0.6 * Math.sin((p.x + p.y) * 0.013 + 2.1) + 0.25 * (hash(tkey(q, r)) - 0.5);
+    return Math.sin(p.x * 0.021 + 1.3) * Math.cos(p.y * 0.024 - 0.7) + 0.6 * Math.sin((p.x + p.y) * 0.013 + 2.1) + 0.25 * (hash(tkey(q, r)) - 0.5);
+  }
+  function terrainOf(q, r, open) {
+    const v = heightOf(q, r);
     if (open && v < -0.95) return 'water';
     if (open && v > 1.05) return 'mountain';
     if (v > 0.55) return 'hills';
@@ -70,7 +73,7 @@ export const CARAVAN: Theme = {
   // another colony's land stays open, so two tiles of open land lie between
   // borders. A tile takes the free tile nearest its parent's, then nearest
   // its city and the middle, so a folder and its files form one district.
-  let owner = new Map(), tiles = new Map(), roads = [], sizes = new Map(), layoutGen = -1, layoutSize = -1;
+  let owner = new Map(), tiles = new Map(), roads = [], roadSet = new Set(), rivers = [], riverSet = new Set(), sizes = new Map(), layoutGen = -1, layoutSize = -1;
   function layout() {
     const kids = childrenMap();
     const size = new Map();
@@ -140,26 +143,99 @@ export const CARAVAN: Theme = {
     }
     // Roads: from each city to the next one round the pentagon, tile by tile.
     roads = [];
+    roadSet = new Set();
     const at = CITIES.map(c => next.get(c)).filter(Boolean);
     for (let i = 0; i < at.length; i++) {
       const a = at[i], b = at[(i + 1) % at.length];
-      roads.push(hexLine([a.q, a.r], [b.q, b.r]).map(([q, r]) => tileCenter(q, r)));
+      const line = hexLine([a.q, a.r], [b.q, b.r]);
+      line.forEach(c => roadSet.add(tkey(...c)));
+      roads.push(line.map(([q, r]) => tileCenter(q, r)));
     }
+    // Rivers: from up to three high tiles in open land, at least five tiles
+    // apart, downhill tile by tile until water, the map's edge or a pit.
+    rivers = [];
+    riverSet = new Set();
+    const highs = [...tiles.values()].filter(tl => !tl.city).sort((a, b) => heightOf(b.q, b.r) - heightOf(a.q, a.r));
+    for (const src of highs) {
+      if (rivers.length >= 3) break;
+      if ([...riverSet].some(k => tdist(k.split(',').map(Number), [src.q, src.r]) < 5)) continue;
+      const path = [tkey(src.q, src.r)];
+      let cur = [src.q, src.r];
+      for (let step = 0; step < 30; step++) {
+        let best, low = heightOf(cur[0], cur[1]);
+        for (const [dq, dr] of DIRS) {
+          const c = [cur[0] + dq, cur[1] + dr], k = tkey(...c);
+          if (!tiles.has(k) || path.includes(k)) continue;
+          const v = heightOf(...c);
+          if (v < low) { low = v; best = c; }
+        }
+        if (!best) break;
+        cur = best;
+        path.push(tkey(...cur));
+        if (tiles.get(tkey(...cur)).terrain === 'water') break;
+      }
+      if (path.length >= 5) { rivers.push(path); path.forEach(k => riverSet.add(k)); }
+    }
+    plans.clear();
     sizes = bodySizes();
     for (const n of nodes.values()) if (owner.has(n.id)) n.settle = 0;
   }
 
-  // A point at s (0 to 1) along a road.
-  function along(road, s) {
-    const segs = road.length - 1;
-    if (segs < 1) return { ...road[0] };
-    const f = Math.min(segs - 1e-6, Math.max(0, s * segs)), i = Math.floor(f), u = f - i;
-    const a = road[i], b = road[i + 1];
-    return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u, z: 0 };
+  // The cost of entering a tile. Roads are fast; water needs a boat; a river
+  // costs extra to cross, except over a bridge (a road tile).
+  const COST = { grass: 1, plains: 1, forest: 2, hills: 3, mountain: 6, water: 1.5 };
+  function costOf(k) {
+    const tl = tiles.get(k);
+    if (!tl) return Infinity;
+    if (tl.terrain === 'water') return COST.water;
+    if (roadSet.has(k)) return 0.5;
+    return COST[tl.terrain] + (riverSet.has(k) ? 1.5 : 0);
   }
+  // A* over the tiles, with those costs. Plans are kept until the map changes.
+  const plans = new Map();
+  function findPath(from, to) {
+    const memo = plans.get(from + '>' + to);
+    if (memo) return memo;
+    const goal = to.split(',').map(Number);
+    const open = new Map([[from, 0]]), came = new Map(), cost = new Map([[from, 0]]);
+    let path = [from];
+    while (open.size) {
+      let cur, best = Infinity;
+      for (const [k, f] of open) if (f < best) { best = f; cur = k; }
+      if (cur === to) {
+        path = [cur];
+        while (came.has(cur)) { cur = came.get(cur); path.push(cur); }
+        path.reverse();
+        break;
+      }
+      open.delete(cur);
+      const [q, r] = cur.split(',').map(Number);
+      for (const [dq, dr] of DIRS) {
+        const nk = tkey(q + dq, r + dr);
+        if (!tiles.has(nk)) continue;
+        const g = cost.get(cur) + costOf(nk);
+        if (g < (cost.get(nk) ?? Infinity)) { cost.set(nk, g); came.set(nk, cur); open.set(nk, g + 0.5 * tdist([q + dq, r + dr], goal)); }
+      }
+    }
+    plans.set(from + '>' + to, path);
+    return path;
+  }
+  // The tile under a point, or the nearest tile on the map.
+  function tileAt(x, y) {
+    const k = tkey(...toHex(x, y));
+    if (tiles.has(k)) return k;
+    let best, bd = Infinity;
+    for (const [tk, tl] of tiles) { const c = tileCenter(tl.q, tl.r), d = Math.hypot(c.x - x, c.y - y); if (d < bd) { bd = d; best = tk; } }
+    return best;
+  }
+  const centerOf = k => { const [q, r] = k.split(',').map(Number); return tileCenter(q, r); };
 
   // Caravans: one horse per city and one per running job or busy session.
-  // A horse walks the road to the next city, rests there, and goes on.
+  // Each plans its route with A* and walks it tile by tile, at a speed that
+  // follows each tile's cost: on a road it trots, in the mountains it crawls,
+  // and on water it sits in a boat. It travels from city to city and rests in
+  // each; the files city's horse brings an envelope to each new file use; in
+  // a swarm every horse plans a route to the glowing house.
   const horses = new Map();
   let lastSim = 0, rest = 0;
   function simulate() {
@@ -178,11 +254,12 @@ export const CARAVAN: Theme = {
       const k = 0.12 + 0.88 * n.settle;
       n.x += (c.x - n.x) * k; n.y += (c.y - n.y) * k; n.z += (c.z - n.z) * k;
     }
-    if (!roads.length) return;
+    const cities = CITIES.filter(c => owner.has(c));
+    if (!cities.length || !tiles.size) return;
     const t = now / 1000;
     const target = hotFile();
     const extra = [...nodes.values()].filter(n => (n.type === 'job' || n.type === 'session') && n.live && !n.dying).length;
-    const want = roads.length + extra;
+    const want = cities.length + extra;
     const seen = new Set();
     let slot = 0;
     for (let i = 0; i < want; i++) {
@@ -190,34 +267,55 @@ export const CARAVAN: Theme = {
       seen.add(key);
       let h = horses.get(key);
       if (!h) {
-        const road = roads[i % roads.length];
-        h = { x: road[0].x, y: road[0].y, z: 0, vx: 0, vy: 0, vz: 0, seed: hash(key), road: i % roads.length, leg: hash(key + 'l'), wait: 0 };
+        const c = owner.get(cities[i % cities.length]), p = tileCenter(c.q, c.r);
+        h = { x: p.x, y: p.y, z: 0, vx: 0, vy: 0, vz: 0, seed: hash(key), city: (i + 1) % cities.length, path: [], pi: 0, u: 0, wait: 0 };
         horses.set(key, h);
       }
-      const road = roads[h.road % roads.length];
-      const len = road.length * TILE * 1.5;
-      if (h.wait > 0) h.wait -= dt;
-      else {
-        h.leg += dt * (14 + 6 * h.seed) * (1 - 0.4 * rest) / Math.max(len, 1);
-        if (h.leg >= 1) { h.leg = 0; h.road = (h.road + 1) % roads.length; h.wait = 1 + 2 * h.seed; }
-      }
-      const p = along(road, h.leg);
-      const onRoad = { x: p.x, y: p.y, z: 0, key: 'road' };
-      // The files city's horse brings an envelope to each new file use.
+      // The files city's horse takes each new file use as a trip.
       if (i === 1) {
         for (const n of nodes.values()) {
           if (n.type !== 'file' || !n.data || n.data.kind !== 'file') continue;
           if (n.caravanAt === undefined) { n.caravanAt = n.at || 0; continue; }
-          if (n.at > n.caravanAt) { n.caravanAt = n.at; if (Date.now() - n.at < GLOW_MS) h.trip = { id: n.id, until: now + 4000 }; }
+          if (n.at > n.caravanAt) { n.caravanAt = n.at; if (Date.now() - n.at < GLOW_MS) h.trip = { id: n.id, until: now + 8000 }; }
         }
-        if (h.trip && (now > h.trip.until || !nodes.has(h.trip.id))) h.trip = undefined;
+        if (h.trip && (now > h.trip.until || !owner.has(h.trip.id))) h.trip = undefined;
       }
-      let goal = onRoad, follow = true;
-      h.carry = 'crate';
-      if (target) { const s = swarmSlot(slot++, target, t); goal = { ...s, key: 'swarm' + target.id }; follow = false; }
-      else if (h.trip) { const n = nodes.get(h.trip.id); goal = { x: n.x, y: n.y + 9, z: 0, key: 'trip' + n.id }; follow = false; h.carry = 'envelope'; }
-      const dist = steer(h, goal, dt, follow);
-      h.shade = (h.shade || 0) + ((target && dist < 20 ? 1 : 0) - (h.shade || 0)) * Math.min(1, dt * 2.5);
+      // The goal tile: the swarm's house, a trip's house, or the next city.
+      let goal, mode;
+      if (target && owner.has(target.id)) { const o = owner.get(target.id); goal = tkey(o.q, o.r); mode = 'swarm'; }
+      else if (h.trip) { const o = owner.get(h.trip.id); goal = tkey(o.q, o.r); mode = 'trip'; }
+      else { const o = owner.get(cities[h.city % cities.length]); goal = tkey(o.q, o.r); mode = 'travel'; }
+      if (h.goal !== goal) {
+        h.goal = goal;
+        h.path = findPath(tileAt(h.x, h.y), goal);
+        h.pi = 0; h.u = 0;
+      }
+      // Walk the plan: one tile at a time, slower on costly tiles.
+      let px, py;
+      if (h.pi < h.path.length - 1) {
+        if (h.wait > 0) h.wait -= dt;
+        else {
+          h.u += dt * 1.3 * (1 - 0.4 * rest) / costOf(h.path[h.pi + 1]);
+          while (h.u >= 1 && h.pi < h.path.length - 1) { h.u -= 1; h.pi++; }
+        }
+        const a = centerOf(h.path[h.pi]), b = centerOf(h.path[Math.min(h.pi + 1, h.path.length - 1)]);
+        const u = h.pi < h.path.length - 1 ? h.u : 0;
+        px = a.x + (b.x - a.x) * u; py = a.y + (b.y - a.y) * u;
+      } else {
+        const end = centerOf(h.path[h.path.length - 1] || goal);
+        px = end.x; py = end.y;
+        if (mode === 'travel') { h.city = (h.city + 1) % cities.length; h.wait = 1 + 2 * h.seed; }
+        if (mode === 'swarm') { const s = swarmSlot(slot++, target, t); px = s.x; py = s.y; }
+      }
+      const k = mode === 'swarm' && h.pi >= h.path.length - 1 ? 0.12 : 1;
+      const nx = h.x + (px - h.x) * k, ny = h.y + (py - h.y) * k;
+      h.vx = (nx - h.x) / Math.max(dt, 0.001); h.vy = (ny - h.y) / Math.max(dt, 0.001);
+      h.x = nx; h.y = ny;
+      const here = tiles.get(tileAt(h.x, h.y));
+      h.boat = !!here && here.terrain === 'water';
+      h.carry = mode === 'trip' ? 'envelope' : 'crate';
+      const arrived = mode === 'swarm' && h.pi >= h.path.length - 1;
+      h.shade = (h.shade || 0) + ((arrived ? 1 : 0) - (h.shade || 0)) * Math.min(1, dt * 2.5);
     }
     for (const key of [...horses.keys()]) if (!seen.has(key)) horses.delete(key);
   }
@@ -326,6 +424,21 @@ export const CARAVAN: Theme = {
       }
     }
 
+    // Rivers: winding blue lines through their tiles.
+    ctx.lineCap = 'round';
+    for (const river of rivers) {
+      const pts = river.map(k => { const c = centerOf(k); return screen(c.x, c.y, 0); });
+      ctx.strokeStyle = 'rgba(90,166,214,0.85)';
+      ctx.lineWidth = Math.max(1.5, 3 * (pts[0] ? pts[0].f : 1));
+      ctx.beginPath();
+      pts.forEach((p, j) => {
+        if (!j) { ctx.moveTo(p.x, p.y); return; }
+        const q = pts[j - 1], w = (hash(river[j]) - 0.5) * 0.6;
+        ctx.quadraticCurveTo((p.x + q.x) / 2 - (p.y - q.y) * w, (p.y + q.y) / 2 + (p.x - q.x) * w, p.x, p.y);
+      });
+      ctx.stroke();
+    }
+
     // Roads: a dirt band with ruts, tile by tile from city to city.
     for (const road of roads) {
       const pts = road.map(p => screen(p.x, p.y, 0));
@@ -334,6 +447,15 @@ export const CARAVAN: Theme = {
       stroke(1, 'rgba(90,65,40,0.7)', [3, 4]);
     }
     ctx.setLineDash([]);
+    // Bridges: wooden planks where a road crosses a river.
+    for (const k of roadSet) {
+      if (!riverSet.has(k)) continue;
+      const c = centerOf(k), s = screen(c.x, c.y, 0), u = TILE * s.f;
+      ctx.fillStyle = 'rgba(120,85,50,0.95)';
+      ctx.fillRect(s.x - u * 0.35, s.y - u * 0.12, u * 0.7, u * 0.24);
+      ctx.strokeStyle = 'rgba(70,50,30,0.9)'; ctx.lineWidth = 1;
+      ctx.strokeRect(s.x - u * 0.35, s.y - u * 0.12, u * 0.7, u * 0.24);
+    }
 
     // Cities and houses, far ones first.
     const order = [...nodes.values()].filter(n => owner.has(n.id)).sort((p, q) => p.depth - q.depth);
@@ -389,9 +511,32 @@ export const CARAVAN: Theme = {
     }
     ctx.setLineDash([]);
 
+    // Each horse's plan: a faint dotted line along the tiles still ahead.
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(242,230,200,0.4)';
+    for (const h of horses.values()) {
+      if (h.pi >= h.path.length - 1) continue;
+      const pts = [screen(h.x, h.y, 0), ...h.path.slice(h.pi + 1).map(k => { const c = centerOf(k); return screen(c.x, c.y, 0); })];
+      ctx.beginPath(); pts.forEach((p, j) => (j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
     // Horses, far ones first, with their load; in a swarm they wear shades.
+    // On water a horse sits in a small boat.
     const herd = [...horses.values()].map(h => ({ h, d: screen(h.x, h.y, h.z).depth })).sort((p, q) => p.d - q.d);
-    for (const { h } of herd) paintHorse(h, t, 1, { shades: h.shade || 0, carry: h.carry });
+    for (const { h } of herd) {
+      paintHorse(h, t, 1, Object.assign({ shades: h.shade || 0, carry: h.carry }, h.boat ? { run: 0 } : {}));
+      if (h.boat) {
+        const s = screen(h.x, h.y, h.z), R = 6 * Math.max(1, s.f), rock = calm ? 0 : Math.sin(t * 3 + h.seed * 9) * 0.08;
+        ctx.save(); ctx.translate(s.x, s.y + R * 0.55); ctx.rotate(rock);
+        ctx.fillStyle = 'rgba(122,82,48,0.98)';
+        ctx.beginPath(); ctx.moveTo(-R * 1.6, -R * 0.2); ctx.lineTo(R * 1.9, -R * 0.2); ctx.lineTo(R * 1.4, R * 0.5); ctx.lineTo(-R * 1.2, R * 0.5); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(169,203,230,0.7)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(-R * 1.9, R * 0.55); ctx.quadraticCurveTo(0, R * 0.8, R * 2.1, R * 0.55); ctx.stroke();
+        ctx.restore();
+      }
+    }
 
     drawLabels(order, near, fc, inFocus, now, n => (n.kind === 'hub' ? 26 : 12) * n.sf);
   }
