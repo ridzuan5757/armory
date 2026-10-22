@@ -10,7 +10,7 @@ export const MOLD: Theme = {
 
   // Each hub has a fixed place on a pentagon in the z = 0 plane, so the five
   // colonies grow apart. The other nodes spread into depth by repulsion.
-  const ANGLE = { 'hub:skills': -90, 'hub:files': -30, 'hub:git': 30, 'hub:jobs': 90, 'hub:memory': 150, 'hub:sessions': 210 };
+  const ANGLE = { 'hub:skills': -90, 'hub:files': -39, 'hub:git': 13, 'hub:mcp': 64, 'hub:jobs': 116, 'hub:memory': 167, 'hub:sessions': 219 };
   function anchor(id) {
     const a = ANGLE[id] * Math.PI / 180;
     return { x: Math.cos(a) * 280, y: Math.sin(a) * 280, z: 0 };

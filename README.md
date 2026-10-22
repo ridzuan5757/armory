@@ -30,6 +30,14 @@ Armory has four themes:
   out. A repo with no open work is dim. Armory runs `git status`,
   `git diff --numstat` and `git log`: every 5 s for the repos that hold the
   files Claude uses, and every 30 s (four per update) for the others.
+- **MCP**: the MCP servers from your config (`~/.claude.json` and the
+  session folder's `.mcp.json`) and the ones connected now (claude.ai
+  connectors, plugins). Each server shows its state: connected (teal, with
+  its tool count), needs a log-in (amber) or not connected (red, dim). The
+  MCP tools that Claude calls appear under their server and glow. Armory
+  reads only each server's name, type and scope from the config, never its
+  env, args, headers or URL, and it records only the tool name and time of a
+  call, never its arguments.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and
@@ -87,6 +95,8 @@ your usual browser.
 
 Armory runs on your computer only. It sends nothing over the network.
 
+- It reads the MCP server names, types and scopes from `~/.claude.json` and
+  `.mcp.json`, and the list of tools the session has.
 - It reads `~/.claude/history.jsonl`, `~/.claude/jobs`, your project memory
   folder and the folders on the way to the files that tools use.
 - It reads the name, folder and status of each session from

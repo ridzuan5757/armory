@@ -107,6 +107,7 @@ const HEAD = `<!doctype html>
   <span><i style="background:#e8ecd8"></i>files</span>
   <span><i style="background:#e0a3ff"></i>sessions</span>
   <span><i style="background:#f0643c"></i>git</span>
+  <span><i style="background:#3fd0b0"></i>mcp</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -115,7 +116,8 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c' };
+  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0' };
+  const MCP_STATUS = { connected: '#3fd0b0', auth: '#f5b94a', off: '#ff6b6b' };
   const CHANGE = { M: '#ff9a4d', A: '#5fd38d', '?': '#5fd38d', D: '#ff6b6b', R: '#7fd8ff' };
   const SESSION = { busy: '#ffcc66', idle: '#7fd8a6', shell: '#7fb2ff' };
   const OP = { read: '#7fd8ff', write: '#ff9a4d', new: '#5fd38d' };
@@ -392,6 +394,25 @@ const SHARED_A = `
       }
     });
 
+    // The MCP colony: one group per server, colored by its status, with the
+    // tools this session called as leaves that glow on use.
+    const servers = s.mcp || [];
+    const up = servers.filter(m => m.status === 'connected').length;
+    node('hub:mcp', { kind: 'hub', label: 'MCP ' + up + '/' + servers.length, color: HUB.mcp, r: 9 }, '', 0);
+    edge('hub:mcp', 'hub:git', { w: 2, rest: 400, k: 0 }, 0);
+    edge('hub:mcp', 'hub:jobs', { w: 2, rest: 400, k: 0 }, 0);
+    servers.forEach((m, i) => {
+      const id = 'mcp:' + m.name, last = m.used.reduce((a, u) => Math.max(a, u.at), 0);
+      node(id, { kind: 'group', type: 'mcp', data: m, label: m.name, color: MCP_STATUS[m.status], r: 3.5 + Math.min(3, Math.sqrt(m.tools) / 2),
+        dim: m.status !== 'connected', at: last, op: last ? 'read' : '' }, 'hub:mcp', step * (250 + i * 40));
+      edge('hub:mcp', id, { w: 0.8 + Math.min(2.4, m.tools / 12), rest: 60, k: 0.08 }, step * (100 + i * 40));
+      branch(id, MCP_STATUS[m.status], m.used.map(u => ({
+        id: 'mcptool:' + m.name + '/' + u.tool, w: 0.8 + Math.min(1.6, Math.log1p(u.uses) / 2), rest: 22,
+        props: { type: 'mcptool', data: Object.assign({ server: m.name }, u), label: u.tool, color: HUB.mcp, at: u.at, op: 'read',
+          r: 2.4 + Math.min(3, Math.log1p(u.uses)), showLabel: true },
+      })), 450 + i * 40, step);
+    });
+
     // One node per running session; a busy one pulses.
     branch('hub:sessions', HUB.sessions, sessions.map(x => ({
       id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
@@ -533,6 +554,16 @@ const SHARED_B = `
   function describe(n) {
     const d = n.data;
     if (n.kind === 'hub') return '<div class="k">hub</div><div class="n">' + esc(n.label) + '</div>';
+    if (n.type === 'mcp') {
+      const what = { connected: 'connected', auth: 'needs a log-in', off: 'not connected' }[d.status] || d.status;
+      return '<div class="k">mcp server \u00b7 ' + esc(d.scope) + ' \u00b7 ' + esc(d.type) + '</div><div class="n">' + esc(d.name) + '</div>' +
+        '<div class="d">' + esc(what) + (d.tools ? ' \u00b7 ' + d.tools + ' tools' : '') + '</div>' +
+        (d.used.length ? '<div class="d">used here: ' + d.used.map(u => esc(u.tool) + ' \u00d7' + u.uses).join(', ') + '</div>' : '');
+    }
+    if (n.type === 'mcptool') {
+      const age = Math.round((Date.now() - d.at) / 1000);
+      return '<div class="k">mcp tool \u00b7 ' + esc(d.server) + '</div><div class="n">' + esc(d.tool) + '</div><div class="d">' + d.uses + ' calls \u00b7 last ' + age + ' s ago</div>';
+    }
     if (n.type === 'repo') {
       const share = d.changes.length ? Math.round(100 * d.mine / d.changes.length) : 0;
       return '<div class="k">repo \u00b7 ' + esc(d.branch) + '</div><div class="n">' + esc(d.root) + '</div>' +

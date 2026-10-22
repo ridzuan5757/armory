@@ -13,7 +13,7 @@ export const HIVE: Theme = {
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false;
 
   // Where each queen cell sits, as an angle out from the middle of the hive.
-  const ANGLE = { 'hub:skills': -90, 'hub:files': -30, 'hub:git': 30, 'hub:jobs': 90, 'hub:memory': 150, 'hub:sessions': 210 };
+  const ANGLE = { 'hub:skills': -90, 'hub:files': -39, 'hub:git': 13, 'hub:mcp': 64, 'hub:jobs': 116, 'hub:memory': 167, 'hub:sessions': 219 };
   function anchor(id) {
     const c = cells.get(id);
     return c ? cellCenter(c) : { x: 0, y: 0, z: 0 };
