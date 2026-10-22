@@ -330,7 +330,7 @@ export const CARAVAN: Theme = {
   }
 
   // Colonies on the world, as in a strategy game: houses keep their tiles,
-  // a colony grows at its border and shrinks at its border.
+  // a colony grows at its border and keeps the land of removed items.
   //
   // The first layout (and a layout after a city comes or goes) places all.
   // City sites: the best land for a city (good biome, by a river, on the
@@ -340,10 +340,11 @@ export const CARAVAN: Theme = {
   // no tile within GAP of another colony; so a folder and its files form one
   // district, and borders follow the land.
   //
-  // After that, a new item takes a free tile next to its colony's land (near
-  // its parent, cheap to reach from the city). A removed item gives up a
-  // border tile: its own tile when that is on the border; else the colony's
-  // farthest border tile, whose house moves into the free tile.
+  // After that, a removed item leaves its tile empty: the land stays with the
+  // colony, and no house moves. A new item first takes an empty tile of its
+  // colony (near its parent). Only when there is none does the colony take a
+  // new tile next to its land, near the colony's newest tile while that is
+  // recent (so new tiles join each other), else near the parent.
   let owner = new Map(), held = new Map(), cityCost = new Map(), cityKey = '';
   let sizes = new Map(), layoutGen = -1, layoutSize = -1, mapGen = 0;
   function layout() {
@@ -360,7 +361,6 @@ export const CARAVAN: Theme = {
     const cities = CITIES.filter(c => nodes.has(c));
     if (!tiles.size) buildWorld();
     mapGen++;
-    const before = new Map(held);
     const bySize = cities.slice().sort((a, b) => count(b) - count(a));
     const cols = bySize.map(city => {
       const order = [];
@@ -373,9 +373,8 @@ export const CARAVAN: Theme = {
     const moved = new Set();
     const full = cities.join(',') !== cityKey;
     if (full) { cityKey = cities.join(','); placeAll(bySize, cols, moved); }
-    else grow(cols, moved);
+    else noteEvents(grow(cols, moved));
     for (const [k, tl] of tiles) tl.city = held.get(k) || '';
-    noteBorders(before, full);
     sizes = bodySizes();
     for (const id of moved) { const n = nodes.get(id); if (n) n.settle = 0; }
   }
@@ -469,45 +468,51 @@ export const CARAVAN: Theme = {
     plans.clear();
   }
 
+  // Returns the events: 'gain' (a new tile), 'fill' (a house on an empty
+  // tile) and 'lose' (a house gone, the tile kept).
+  const lastGain = new Map();
   function grow(cols, moved) {
-    const want = new Map();
+    const want = new Map(), events = [];
     for (const col of cols) for (const [id, parent] of col.order) want.set(id, { parent, city: col.city });
-    // Gone items first, so their tiles are free for the new ones.
     for (const [id, o] of [...owner]) {
       if (o.city === id) continue;
       const w = want.get(id);
       if (w && w.city === o.city) continue;
       owner.delete(id);
-      shrink(o.city, tkey(o.q, o.r), moved);
+      events.push({ k: tkey(o.q, o.r), kind: 'lose', city: o.city });
     }
+    const used = new Set([...owner.values()].map(o => tkey(o.q, o.r)));
+    const now = performance.now();
     for (const [id, w] of want) {
       if (owner.has(id)) continue;
-      const cell = frontier(id, w.city, owner.get(w.parent) || owner.get(w.city));
+      const pc = owner.get(w.parent) || owner.get(w.city);
+      // An empty tile of the colony, nearest the parent.
+      let cell, kind = 'fill', bd = Infinity;
+      for (const [k, c] of held) {
+        if (c !== w.city || used.has(k)) continue;
+        const d = (pc ? tdist(unkey(k), [pc.q, pc.r]) : 0) + 0.001 * hash(id + k);
+        if (d < bd) { bd = d; cell = unkey(k); }
+      }
+      if (!cell) {
+        const g = lastGain.get(w.city);
+        const near = g && now - g.at < CHANGE_MS ? { q: unkey(g.k)[0], r: unkey(g.k)[1] } : pc;
+        cell = frontier(id, w.city, near);
+        kind = 'gain';
+      }
       if (!cell) continue;
-      held.set(tkey(...cell), w.city);
+      const k = tkey(...cell);
+      held.set(k, w.city);
+      used.add(k);
       owner.set(id, { q: cell[0], r: cell[1], city: w.city });
       moved.add(id);
+      events.push({ k, kind, city: w.city });
+      if (kind === 'gain') lastGain.set(w.city, { k, at: now });
     }
+    return events;
   }
 
-  const onEdge = (k, city) => { const [q, r] = unkey(k); return DIRS.some(([dq, dr]) => held.get(tkey(q + dq, r + dr)) !== city); };
-  function shrink(city, freed, moved) {
-    if (onEdge(freed, city)) { held.delete(freed); return; }
-    const cost = cityCost.get(city), home = owner.get(city), homeKey = home && tkey(home.q, home.r);
-    let far, fd = -1;
-    for (const [k, c] of held) {
-      if (c !== city || k === freed || k === homeKey || !onEdge(k, city)) continue;
-      const d = (cost && cost.get(k)) ?? 99;
-      if (d > fd) { fd = d; far = k; }
-    }
-    if (!far) { held.delete(freed); return; }
-    const [q, r] = unkey(freed);
-    for (const [id, o] of owner) if (tkey(o.q, o.r) === far) { owner.set(id, { q, r, city }); moved.add(id); }
-    held.delete(far);
-  }
-
-  // The best free tile next to the colony's land: near the parent, cheap to
-  // reach from the city. First within the rules, then without the gap, then
+  // The best free tile next to the colony's land: near a given tile, cheap
+  // to reach from the city. First within the rules, then without the gap, then
   // any land or water tile.
   function frontier(id, city, pc) {
     const toCity = cityCost.get(city) || new Map();
@@ -521,7 +526,7 @@ export const CARAVAN: Theme = {
           if (!tl || held.has(ck)) continue;
           if (strict && (!HOLDABLE[tl.terrain] || riverSet.has(ck))) continue;
           if (strict === 2 && nearOther(cell, city)) continue;
-          const s = 0.6 * (pc ? tdist(cell, [pc.q, pc.r]) : 0) + 0.25 * (toCity.get(ck) ?? 99) + 0.001 * hash(id + ck);
+          const s = 1.2 * (pc ? tdist(cell, [pc.q, pc.r]) : 0) + 0.25 * (toCity.get(ck) ?? 99) + 0.001 * hash(id + ck);
           if (s < bs) { bs = s; best = cell; }
         }
       }
@@ -535,26 +540,19 @@ export const CARAVAN: Theme = {
     return { x: 0, y: 0, z: 0, r: OX, w: 2 * OX + 2 * TILE, h: (2 * OY + 2 * TILE) * Math.max(0.4, Math.cos(view.pitch)) };
   }
 
-  // Border changes, as a strategy game shows them: each tile a colony gains
-  // or loses flashes for CHANGE_MS, and the city shows the count (+2, -1).
-  // A layout that places all (the first one) is no change.
+  // Changes, as a strategy game shows them: each tile that a colony gains,
+  // fills or empties flashes for CHANGE_MS, and the city shows the count of
+  // houses (+2, -1). A layout that places all (the first one) shows none.
   const CHANGE_MS = 5000;
   const changes = new Map(), tally = new Map();
-  function noteBorders(before, full) {
-    if (full) return;
+  function noteEvents(events) {
     const at = performance.now();
-    const count = (city, key) => {
-      const v = tally.get(city);
+    for (const e of events) {
+      changes.set(e.k, { kind: e.kind, city: e.city, at });
+      const v = tally.get(e.city);
       const t = v && at - v.at < CHANGE_MS ? v : { gain: 0, lose: 0 };
-      t[key]++; t.at = at;
-      tally.set(city, t);
-    };
-    for (const [k, tl] of tiles) {
-      const was = before.get(k) || '';
-      if (was === tl.city) continue;
-      if (was) count(was, 'lose');
-      if (tl.city) { changes.set(k, { kind: 'gain', city: tl.city, at }); count(tl.city, 'gain'); }
-      else changes.set(k, { kind: 'lose', city: was, at });
+      t[e.kind === 'lose' ? 'lose' : 'gain']++; t.at = at;
+      tally.set(e.city, t);
     }
   }
 
@@ -760,8 +758,9 @@ export const CARAVAN: Theme = {
     }
   }
 
-  // Gained tiles pulse in the colony's color with a solid edge; lost tiles
-  // flash red with a dashed edge. A file in use outlines its tile in the
+  // Gained and filled tiles pulse in the colony's color with a solid edge
+  // (a gained tile also sends out a ring); a tile whose house is gone
+  // flashes red with a dashed edge. A file in use outlines its tile in the
   // color of the tool's work (read, write, new). Over each city, the count
   // of tiles it gained and lost rises and fades (drawTally).
   function drawChanges(now, t) {
@@ -781,7 +780,7 @@ export const CARAVAN: Theme = {
       const age = (now - c.at) / CHANGE_MS;
       if (age >= 1) { changes.delete(k); continue; }
       const city = nodes.get(c.city);
-      outline(k, c.kind === 'gain' ? (city ? city.color : '#ffffff') : '#ff4d4d', 1 - age, c.kind === 'lose');
+      outline(k, c.kind === 'lose' ? '#ff4d4d' : (city ? city.color : '#ffffff'), 1 - age, c.kind === 'lose');
       // A gained tile also sends out one ring as it joins.
       if (c.kind === 'gain' && age < 0.3 && !calm) {
         const s = screen(centerOf(k).x, centerOf(k).y, 0);
