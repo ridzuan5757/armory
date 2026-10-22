@@ -44,6 +44,11 @@ Armory has four themes:
   is, linked to that session. Green below 50 %, amber from 50 %, red from
   80 %. For other sessions Armory reads only the end of the transcript, and
   keeps only the token counts and the model name, never the text.
+- **Plugins**: the installed plugins with their marketplace, scope, version
+  and last update; one updated in the last hour pulses.
+- **Schedule**: this session's scheduled wakeups (cron tasks, `/loop`,
+  `ScheduleWakeup`) and background work (subagents, workflows, shell tasks,
+  monitors), as the end of each turn reports them; running work pulses.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and

@@ -54,6 +54,17 @@ export type UsageRow = {
   cost: number
   contexts: { pid: number; name: string; tokens: number; window: number; percent: number; model: string; self: boolean }[]
 }
+// An installed plugin, from ~/.claude/plugins/installed_plugins.json: name,
+// marketplace, scope, version and last update (ms); self marks Armory.
+export type PluginRow = { name: string; marketplace: string; scope: string; version: string; updated: number; self: boolean }
+// This session's scheduled wakeups (cron tasks, /loop, ScheduleWakeup) and
+// background work (subagents, workflows, shell tasks, monitors), as the
+// engine's Stop event gives them at the end of each turn. Text is clipped.
+export type ScheduleRow = {
+  crons: { id: string; schedule: string; recurring: boolean; prompt: string }[]
+  tasks: { id: string; type: string; status: string; description: string }[]
+  at: number
+}
 export type Snapshot = {
   skills: SkillRow[]
   jobs: JobRow[]
@@ -63,6 +74,8 @@ export type Snapshot = {
   git: GitRepo[]
   mcp: McpRow[]
   usage: UsageRow
+  plugins: PluginRow[]
+  schedule: ScheduleRow
   loadedAt: number
   errors: string[]
 }

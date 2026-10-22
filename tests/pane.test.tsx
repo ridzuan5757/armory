@@ -515,3 +515,48 @@ test('the usage colony reads limits, cost and each session context, and no trans
   expect(tails).toEqual([`${HOME}/.claude/projects/-home-u-work/s-5000.jsonl`])
   expect(page).not.toContain('SECRET')
 })
+
+test('plugins come from the install list, and the schedule from the end of a turn', async ($, on) => {
+  const pages: string[] = []
+  on('command.register', () => ({ value: { command: 'armory' } }))
+  on('command.list', () => ({ value: [] }))
+  on('env.get', () => ({ value: HOME }))
+  on('session.id', () => ({ value: 'abc-123' }))
+  on('process.run', (_, e) => ({ value: { exitCode: 0, stdout: e.argv[0] === 'sh' ? '4242\n' : '', stderr: '' } }))
+  on('fs.read', (_, e) => {
+    if (e.path === `${HOME}/.claude/plugins/installed_plugins.json`) {
+      return { value: JSON.stringify({ version: 2, plugins: {
+        'armory@armory': [{ scope: 'user', version: '0.39.0', lastUpdated: '2026-10-22T11:00:00.000Z', installPath: '/SECRET-PATH/armory' }],
+        'skins@mods': [{ scope: 'user', version: '0.5.14', installedAt: '2026-10-14T23:08:22.383Z', installPath: '/SECRET-PATH/skins' }],
+      } }) }
+    }
+    throw new Error(`ENOENT ${e.path}`)
+  })
+  on('fs.list', () => ({ value: [] }))
+  on('fs.exists', () => ({ value: false }))
+  on('fs.write', (_, e) => (e.path.endsWith('data.js') && pages.push(e.text), { value: undefined }))
+  on('classic.Stop', () => ({}))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run({ command: 'armory', args: 'web' })
+  await $.classic.Stop({
+    stop_hook_active: false,
+    session_crons: [{ id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: 'check   the\ndeploy' }],
+    background_tasks: [
+      { id: 't1', type: 'subagent', status: 'running', description: 'review the diff', agent_type: 'Explore' },
+      { id: 't2', type: 'workflow', status: 'completed', description: 'x', name: 'review-changes' },
+    ],
+  })
+  const snap = () => { const page = pages.at(-1) ?? ''; return JSON.parse(page.slice(page.indexOf('(') + 1, page.lastIndexOf(')'))).snapshot }
+  expect(snap().plugins).toEqual([
+    { name: 'armory', marketplace: 'armory', scope: 'user', version: '0.39.0', updated: Date.parse('2026-10-22T11:00:00.000Z'), self: true },
+    { name: 'skins', marketplace: 'mods', scope: 'user', version: '0.5.14', updated: Date.parse('2026-10-14T23:08:22.383Z'), self: false },
+  ])
+  expect(snap().schedule.crons).toEqual([{ id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: 'check the deploy' }])
+  expect(snap().schedule.tasks).toEqual([
+    { id: 't1', type: 'subagent', status: 'running', description: 'Explore \u00b7 review the diff' },
+    { id: 't2', type: 'workflow', status: 'completed', description: 'review-changes \u00b7 x' },
+  ])
+  expect(pages.at(-1)).not.toContain('SECRET')
+})

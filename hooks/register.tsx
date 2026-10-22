@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileOp, FileRow, GitRepo, JobRow, McpRow, MemoryRow, SessionRow, SkillRow, Snapshot, Tab, Touch, UsageRow } from '../types'
+import type { FileOp, FileRow, GitRepo, JobRow, McpRow, MemoryRow, PluginRow, ScheduleRow, SessionRow, SkillRow, Snapshot, Tab, Touch, UsageRow } from '../types'
 
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
@@ -10,7 +10,7 @@ import { DEFAULT_THEME, THEMES, buildOf, dataScript, pageOf } from './web'
 
 const PANE = 'armory'
 const TITLE = 'Armory'
-const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], mcp: [], usage: { limits: [], cost: 0, contexts: [] }, loadedAt: 0, errors: [] }
+const EMPTY: Snapshot = { skills: [], jobs: [], memory: [], files: [], sessions: [], git: [], mcp: [], usage: { limits: [], cost: 0, contexts: [] }, plugins: [], schedule: { crons: [], tasks: [], at: 0 }, loadedAt: 0, errors: [] }
 
 const tab = atom({ plugin: 'armory', key: 'tab' } as const, 'skills' as Tab)
 const snapshot = atom({ plugin: 'armory', key: 'snapshot' } as const, EMPTY)
@@ -433,6 +433,39 @@ async function loadUsage($: EngineInterface, home: string, sessions: SessionRow[
   }
 }
 
+// The PLUGINS colony: each installed plugin with its marketplace, scope,
+// version and last update. No install paths leave the file.
+async function loadPlugins($: EngineInterface, home: string): Promise<PluginRow[]> {
+  const text = await $.fs.read(`${home}/.claude/plugins/installed_plugins.json`).catch(() => '')
+  if (!text) return []
+  const all = (JSON.parse(text) as { plugins?: Record<string, unknown> }).plugins ?? {}
+  return Object.entries(all).map(([key, v]) => {
+    const e = (Array.isArray(v) ? v[0] : v) as { scope?: unknown; version?: unknown; lastUpdated?: unknown; installedAt?: unknown } | undefined
+    const [name = key, marketplace = ''] = key.split('@')
+    const when = Date.parse(String(e?.lastUpdated ?? e?.installedAt ?? ''))
+    return {
+      name, marketplace,
+      scope: typeof e?.scope === 'string' ? e.scope : '',
+      version: typeof e?.version === 'string' ? e.version : '',
+      updated: Number.isFinite(when) ? when : 0,
+      self: name === 'armory',
+    }
+  })
+}
+
+// The SCHEDULE colony, from the engine's Stop event at the end of each turn.
+const clip = (s: unknown, n: number) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}\u2026` : t }
+function scheduleOf(e: { session_crons?: unknown; background_tasks?: unknown }): ScheduleRow {
+  const crons = (Array.isArray(e.session_crons) ? e.session_crons : []) as { id?: unknown; schedule?: unknown; recurring?: unknown; prompt?: unknown }[]
+  const tasks = (Array.isArray(e.background_tasks) ? e.background_tasks : []) as { id?: unknown; type?: unknown; status?: unknown; description?: unknown; name?: unknown; agent_type?: unknown }[]
+  return {
+    crons: crons.map(c => ({ id: String(c.id ?? ''), schedule: String(c.schedule ?? ''), recurring: c.recurring === true, prompt: clip(c.prompt, 120) })),
+    tasks: tasks.map(t => ({ id: String(t.id ?? ''), type: String(t.type ?? ''), status: String(t.status ?? ''),
+      description: clip([t.name ?? t.agent_type, t.description].filter(x => typeof x === 'string' && x).join(' \u00b7 '), 120) })),
+    at: Date.now(),
+  }
+}
+
 // Records an MCP tool call (its name and time; never the arguments), then
 // loads the MCP colony again soon. Calls in one burst share one load.
 let mcpPending = false
@@ -560,7 +593,9 @@ async function refresh($: EngineInterface) {
     loadMcp($, home, cwd).catch(err => (errors.push(`mcp: ${String(err)}`), [])),
   ])
   const usage = await loadUsage($, home, sessions).catch(err => (errors.push(`usage: ${String(err)}`), EMPTY.usage))
-  const next = { skills, jobs, memory, files, sessions, git, mcp, usage, loadedAt: Date.now(), errors }
+  const plugins = await loadPlugins($, home).catch(err => (errors.push(`plugins: ${String(err)}`), []))
+  const schedule = (await read($, snapshot)).schedule ?? EMPTY.schedule
+  const next = { skills, jobs, memory, files, sessions, git, mcp, usage, plugins, schedule, loadedAt: Date.now(), errors }
   await update($, snapshot, () => next)
   if (web.isOn) await writeData($, next, 1000)
 }
@@ -887,6 +922,16 @@ export const register: Register = on => {
     const ran = await next(e)
     const tool = String(e.tool)
     if (tool.startsWith('mcp__') && ran.deny === undefined) void usedMcp($, tool).catch(() => undefined)
+
+    return ran
+  }).catch(($, e, next) => next(e))
+
+  // The end of a turn gives this session's scheduled wakeups and background work.
+  on('classic.Stop', async ($, e, next) => {
+    const ran = await next(e)
+    const schedule = scheduleOf(e)
+    const saved = await update($, snapshot, s => ({ ...s, schedule }))
+    if (web.isOn) void writeData($, saved, 1000).catch(() => undefined)
 
     return ran
   }).catch(($, e, next) => next(e))
