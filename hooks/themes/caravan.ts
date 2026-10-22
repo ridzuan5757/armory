@@ -13,7 +13,7 @@ import { HORSE_KIT } from './horse'
 
 export const CARAVAN: Theme = {
   name: 'caravan',
-  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
+  legend: 'the Earth, with fractal terrain · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · 1 hour = 1 year: each season brings floods, wildfires, storms, blizzards or earthquakes that slow the horses · drag, two fingers or arrow keys to move the map · pinch or + and - to zoom',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
   const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:jobs', 'hub:memory', 'hub:sessions'];
@@ -206,6 +206,7 @@ export const CARAVAN: Theme = {
     for (const [k, tl] of tiles) {
       const u = tl.col / (COLS - 1), v = tl.row / (ROWS - 1), d = coast.get(k) || 9;
       tl.lat = 80 - (tl.row + 0.5) * 140 / ROWS;
+      tl.coast = d;
       if (!tl.land) { tl.h = -0.1 * d; tl.terrain = d <= 2 ? 'water' : 'deep'; continue; }
       const a = Math.abs(tl.lat);
       const belt = a < 10 ? 0.35 : a < 18 ? 0.1 : a < 35 ? -0.35 : a < 55 ? 0.1 : 0;
@@ -276,13 +277,16 @@ export const CARAVAN: Theme = {
   // costs extra to cross, except over a bridge (a road tile).
   const COST = { deep: 2, water: 1.5, sand: 1, desert: 1.5, plains: 1, grass: 1, forest: 2, jungle: 2.5, tundra: 1.5, hills: 3, mountain: 6, snow: 8, ice: 8, volcano: 10 };
   let roads = [], roadSet = new Set();
-  function costOf(k) {
+  function baseCost(k) {
     const tl = tiles.get(k);
     if (!tl) return Infinity;
     if (WET[tl.terrain]) return COST[tl.terrain];
     if (roadSet.has(k)) return 0.5;
     return COST[tl.terrain] + (riverSet.has(k) ? 1.5 : 0);
   }
+  // A disaster on a tile multiplies its cost (see hazard). Cities and
+  // territories use the base cost, so a disaster moves no house.
+  const costOf = k => baseCost(k) * (hazard.get(k) || 1);
   // Dijkstra from one tile: the travel cost to every tile.
   function costsFrom(start) {
     const dist = new Map([[start, 0]]), q = heap();
@@ -294,7 +298,7 @@ export const CARAVAN: Theme = {
       for (const [dq, dr] of DIRS) {
         const nk = tkey(x + dq, y + dr);
         if (!tiles.has(nk)) continue;
-        const nd = d + costOf(nk);
+        const nd = d + baseCost(nk);
         if (nd < (dist.get(nk) ?? Infinity)) { dist.set(nk, nd); q.push(nk, nd); }
       }
     }
@@ -584,6 +588,90 @@ export const CARAVAN: Theme = {
   }
   const centerOf = k => { const [q, r] = unkey(k); return tileCenter(q, r); };
 
+  // Time: one year of the world is one hour of real time, so a season is 15
+  // minutes. The date comes from the clock, so every session and every
+  // reload agree. The south has the opposite season. clockShift moves the
+  // clock, for a preview.
+  const YEAR_MS = 3600000, SEASON_MS = YEAR_MS / 4, EPOCH = Date.UTC(2026, 0, 1);
+  const SEASONS = ['Spring', 'Summer', 'Autumn', 'Winter'];
+  const SEASON_COLOR = ['#7fd36a', '#ffd27a', '#e08a3a', '#cfe3f2'];
+  let clockShift = 0;
+  const worldNow = () => Date.now() + clockShift;
+  const seasonAt = (lat, north) => (lat < 0 ? (north + 2) % 4 : north);
+  function calendar() {
+    const t = worldNow() - EPOCH, n = Math.floor(t / SEASON_MS);
+    return { year: Math.floor(t / YEAR_MS) + 1, n, season: ((n % 4) + 4) % 4,
+      day: Math.floor((t - n * SEASON_MS) / SEASON_MS * 90) + 1, frac: (t / YEAR_MS) % 1 };
+  }
+
+  // Natural disasters. Each season starts three to six, from a seed of the
+  // season's number; six in ten come within four tiles of a road. A kind needs its
+  // local season and its land: floods on rivers in spring, wildfires in
+  // forest, jungle and grassland in summer, tropical storms at sea near the
+  // coast in autumn, blizzards at high latitudes in winter; earthquakes in
+  // hills and mountains at any time, less often. Each lasts two to five real
+  // minutes. Inside one, a tile costs mult times more to cross.
+  const HAZARD = {
+    flood: { name: 'Flood', season: 0, mult: 3, color: '#4f9fd0', r: [1, 2], land: true,
+      place: tl => tl.land && (riverSet.has(tkey(tl.q, tl.r)) || DIRS.some(([dq, dr]) => riverSet.has(tkey(tl.q + dq, tl.r + dr)))) },
+    wildfire: { name: 'Wildfire', season: 1, mult: 5, color: '#ff6a2a', r: [1, 2], land: true,
+      place: tl => tl.terrain === 'forest' || tl.terrain === 'jungle' || tl.terrain === 'grass' },
+    storm: { name: 'Tropical storm', season: 2, mult: 3, color: '#c3cdd8', r: [2, 3], land: false,
+      place: tl => WET[tl.terrain] && tl.coast <= 3 && Math.abs(tl.lat) > 8 && Math.abs(tl.lat) < 35 },
+    blizzard: { name: 'Blizzard', season: 3, mult: 4, color: '#eef4f8', r: [1, 2], land: true,
+      place: tl => tl.land && Math.abs(tl.lat) > 38 && tl.terrain !== 'ice' },
+    quake: { name: 'Earthquake', season: -1, mult: 2.5, color: '#c9a06a', r: [1, 1], land: true,
+      place: tl => tl.terrain === 'hills' || tl.terrain === 'mountain' || tl.terrain === 'snow' },
+  };
+  const seasonDisasters = new Map();
+  function disastersOf(n) {
+    if (seasonDisasters.has(n)) return seasonDisasters.get(n);
+    const rnd = rng(n * 7919 + 13), north = ((n % 4) + 4) % 4, kinds = Object.keys(HAZARD), out = [];
+    const count = 3 + Math.floor(rnd() * 4);
+    for (let tries = 0; out.length < count && tries < 60; tries++) {
+      const kind = kinds[Math.floor(rnd() * kinds.length)], hz = HAZARD[kind];
+      if (kind === 'quake' && rnd() > 0.4) continue;
+      const spots = [...tiles.values()].filter(tl => hz.place(tl) && (hz.season < 0 || seasonAt(tl.lat, north) === hz.season)
+        && out.every(d => tdist([d.q, d.r], [tl.q, tl.r]) > 5));
+      if (!spots.length) continue;
+      // Most disasters come near a road, where the caravans travel.
+      const near = spots.filter(tl => [...roadSet].some(k => tdist(unkey(k), [tl.q, tl.r]) <= 4));
+      const pool = near.length && rnd() < 0.6 ? near : spots;
+      const at = pool[Math.floor(rnd() * pool.length)];
+      const start = EPOCH + n * SEASON_MS + rnd() * SEASON_MS * 0.75;
+      out.push({ id: n + ':' + out.length, kind, q: at.q, r: at.r, radius: hz.r[0] + Math.floor(rnd() * (hz.r[1] - hz.r[0] + 1)),
+        start, end: start + 120000 + rnd() * 180000 });
+    }
+    seasonDisasters.set(n, out);
+    return out;
+  }
+  // The disasters now (this season's and the last one's), and the cost
+  // multiplier of each tile they cover. When the set changes, the plans go
+  // and every horse plans its route again.
+  let hazard = new Map(), hazardKey = '', hazardGen = 0, active = [];
+  function updateHazards() {
+    if (!tiles.size) return;
+    const now = worldNow(), { n } = calendar();
+    active = [...disastersOf(n - 1), ...disastersOf(n)].filter(d => now >= d.start && now < d.end);
+    const key = active.map(d => d.id).join(',');
+    if (key === hazardKey) return;
+    hazardKey = key; hazardGen++;
+    hazard = new Map();
+    for (const d of active) {
+      const hz = HAZARD[d.kind];
+      d.tiles = [];
+      for (let k = 0; k <= d.radius; k++) {
+        for (const c of k ? ringAround(d.q, d.r, k) : [[d.q, d.r]]) {
+          const ck = tkey(...c), tl = tiles.get(ck);
+          if (!tl || (hz.land && WET[tl.terrain])) continue;
+          d.tiles.push(ck);
+          hazard.set(ck, Math.max(hazard.get(ck) || 1, hz.mult));
+        }
+      }
+    }
+    plans.clear();
+  }
+
   // Caravans: one horse per city and one per running job or busy session.
   // Each plans its route with A* and walks it tile by tile, at a speed that
   // follows each tile's cost: on a road it trots, in the mountains it crawls,
@@ -594,6 +682,7 @@ export const CARAVAN: Theme = {
   let lastSim = 0, rest = 0, lastWrite = 0;
   function simulate() {
     if (gen !== layoutGen || nodes.size !== layoutSize) { layout(); layoutGen = gen; layoutSize = nodes.size; }
+    updateHazards();
     const now = performance.now();
     const dt = lastSim ? Math.min(0.1, (now - lastSim) / 1000) : 0;
     lastSim = now;
@@ -640,8 +729,8 @@ export const CARAVAN: Theme = {
       if (target && owner.has(target.id)) { const o = owner.get(target.id); goal = tkey(o.q, o.r); mode = 'swarm'; }
       else if (h.trip) { const o = owner.get(h.trip.id); goal = tkey(o.q, o.r); mode = 'trip'; }
       else { const o = owner.get(cities[h.city % cities.length]); goal = tkey(o.q, o.r); mode = 'travel'; }
-      if (h.goal !== goal || h.gen !== layoutGen) {
-        h.goal = goal; h.gen = layoutGen;
+      if (h.goal !== goal || h.gen !== layoutGen || h.hz !== hazardGen) {
+        h.goal = goal; h.gen = layoutGen; h.hz = hazardGen;
         h.path = findPath(tileAt(h.x, h.y), goal);
         h.pi = 0; h.u = 0;
       }
@@ -844,6 +933,107 @@ export const CARAVAN: Theme = {
     pen.textBaseline = 'alphabetic';
   }
 
+  // Disasters on the map. Each fades in and out over 4 s. A flood is blue
+  // water with rings, a wildfire flickering flames and smoke, a storm a
+  // turning spiral, a blizzard drifting snow, an earthquake cracks that
+  // shake. Over the middle, its name and the time left.
+  function drawDisasters(t) {
+    const now = worldNow();
+    pen.textAlign = 'center';
+    for (const d of active) {
+      const hz = HAZARD[d.kind];
+      const fade = Math.max(0, Math.min(1, (now - d.start) / 4000, (d.end - now) / 4000));
+      for (const k of d.tiles || []) {
+        const c = centerOf(k), s = screen(c.x, c.y, 0), u = TILE * s.f, sd = hash(d.id + k), wob = calm ? 0 : 1;
+        fillPath(tilePath(c, 0.97));
+        pen.fillStyle = rgba(d.kind === 'wildfire' ? '#7a1e0e' : hz.color, (d.kind === 'quake' ? 0.15 : 0.32) * fade * s.fog);
+        pen.fill();
+        if (d.kind === 'flood') {
+          pen.strokeStyle = rgba('#d6ecf8', 0.6 * fade);
+          pen.lineWidth = Math.max(0.6, u * 0.06);
+          const ph = (t * 0.6 * wob + sd) % 1;
+          pen.beginPath(); pen.ellipse(s.x, s.y, u * (0.15 + 0.5 * ph), u * (0.08 + 0.25 * ph), 0, 0, 6.2832); pen.stroke();
+        } else if (d.kind === 'wildfire') {
+          for (let i = 0; i < 3; i++) {
+            const fx = s.x + (i - 1) * u * 0.32, h = u * (0.35 + 0.2 * Math.sin(t * 9 * wob + sd * 20 + i * 2));
+            pen.fillStyle = rgba(i === 1 ? '#ffd23a' : '#ff6a2a', 0.9 * fade);
+            pen.beginPath(); pen.moveTo(fx - u * 0.13, s.y + u * 0.2); pen.quadraticCurveTo(fx - u * 0.1, s.y - h * 0.5, fx, s.y + u * 0.2 - h - u * 0.1); pen.quadraticCurveTo(fx + u * 0.1, s.y - h * 0.5, fx + u * 0.13, s.y + u * 0.2); pen.fill();
+          }
+          const k2 = (t * 0.4 * wob + sd) % 1;
+          pen.fillStyle = rgba('#5a5a5a', 0.35 * (1 - k2) * fade);
+          pen.beginPath(); pen.arc(s.x + u * 0.2 * Math.sin(sd * 9), s.y - u * (0.5 + 1.2 * k2), u * (0.15 + 0.25 * k2), 0, 6.2832); pen.fill();
+        } else if (d.kind === 'blizzard') {
+          pen.fillStyle = rgba('#ffffff', 0.85 * fade);
+          for (let i = 0; i < 4; i++) {
+            const ph = (t * 0.5 * wob + hash(k + i)) % 1;
+            pen.beginPath(); pen.arc(s.x + (hash(k + i + 'x') - 0.5) * u * 1.2 + ph * u * 0.4, s.y - u * 0.5 + ph * u, Math.max(0.7, u * 0.05), 0, 6.2832); pen.fill();
+          }
+        } else if (d.kind === 'quake') {
+          const jx = calm ? 0 : Math.sin(t * 40 + sd * 9) * u * 0.04;
+          pen.strokeStyle = rgba('#2a1d12', 0.85 * fade);
+          pen.lineWidth = Math.max(0.8, u * 0.07);
+          pen.beginPath(); pen.moveTo(s.x - u * 0.45 + jx, s.y - u * 0.1);
+          pen.lineTo(s.x - u * 0.15 + jx, s.y + u * 0.08); pen.lineTo(s.x + u * 0.05 + jx, s.y - u * 0.12); pen.lineTo(s.x + u * 0.4 + jx, s.y + u * 0.1); pen.stroke();
+        }
+      }
+      const c = tileCenter(d.q, d.r), s = screen(c.x, c.y, 0), u = TILE * s.f;
+      if (d.kind === 'storm') {
+        // Spiral arms that turn around the eye.
+        pen.strokeStyle = rgba('#eef2f6', 0.7 * fade);
+        pen.lineWidth = Math.max(1.2, u * 0.12);
+        const turn = calm ? 0 : -t * 1.2, R = u * (d.radius + 0.6);
+        for (let arm = 0; arm < 3; arm++) {
+          pen.beginPath();
+          for (let i = 0; i <= 20; i++) {
+            const f = i / 20, a = turn + arm * 2.094 + f * 3.2, r = R * (0.15 + 0.85 * f);
+            const x = s.x + Math.cos(a) * r, y = s.y + Math.sin(a) * r * 0.75;
+            i ? pen.lineTo(x, y) : pen.moveTo(x, y);
+          }
+          pen.stroke();
+        }
+      }
+      const left = Math.max(0, Math.round((d.end - now) / 1000));
+      pen.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+      const text = hz.name + ' \u00b7 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+      const y = s.y - u * (d.radius + 1.2);
+      pen.lineWidth = 3; pen.strokeStyle = rgba('#14161b', 0.85 * fade);
+      pen.strokeText(text, s.x, y);
+      pen.fillStyle = rgba(hz.color, fade);
+      pen.fillText(text, s.x, y);
+    }
+  }
+
+  // The calendar, at the top right: a year wheel with its four seasons and a
+  // hand, the year, the season and day in the north, and the disasters now.
+  function drawCalendar() {
+    const cal = calendar(), x = W - 30, y = TOP + 26, R = 14;
+    for (let i = 0; i < 4; i++) {
+      pen.fillStyle = rgba(SEASON_COLOR[i], i === cal.season ? 0.9 : 0.35);
+      pen.beginPath(); pen.moveTo(x, y); pen.arc(x, y, R, -Math.PI / 2 + i * Math.PI / 2, -Math.PI / 2 + (i + 1) * Math.PI / 2); pen.closePath(); pen.fill();
+    }
+    const a = -Math.PI / 2 + cal.frac * 6.2832;
+    pen.strokeStyle = '#14161b'; pen.lineWidth = 2;
+    pen.beginPath(); pen.moveTo(x, y); pen.lineTo(x + Math.cos(a) * R, y + Math.sin(a) * R); pen.stroke();
+    pen.textAlign = 'right';
+    pen.textBaseline = 'middle';
+    pen.font = '700 12px ui-sans-serif, system-ui, sans-serif';
+    pen.fillStyle = SEASON_COLOR[cal.season];
+    pen.fillText('Year ' + cal.year + ' \u00b7 ' + SEASONS[cal.season] + ' (north) \u00b7 day ' + cal.day, x - R - 8, y - 6);
+    pen.font = '11px ui-sans-serif, system-ui, sans-serif';
+    pen.fillStyle = 'rgba(210,214,222,0.75)';
+    pen.fillText('south: ' + SEASONS[(cal.season + 2) % 4] + ' \u00b7 1 hour = 1 year', x - R - 8, y + 9);
+    const now = worldNow();
+    active.forEach((d, i) => {
+      const hz = HAZARD[d.kind], left = Math.max(0, Math.round((d.end - now) / 1000));
+      const yy = y + 30 + i * 15;
+      pen.fillStyle = hz.color;
+      pen.beginPath(); pen.arc(x - R - 12 - 4, yy, 3.5, 0, 6.2832); pen.fill();
+      pen.fillStyle = 'rgba(225,228,234,0.9)';
+      pen.fillText(hz.name + ' \u00d7' + hz.mult + ' cost \u00b7 ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'), x - R - 26, yy);
+    });
+    pen.textBaseline = 'alphabetic';
+  }
+
   // A house: a box with a roof, sized by its data; a used one lights its window.
   function house(x, y, s, color, fade, lit) {
     pen.fillStyle = rgba(color, 0.9 * fade);
@@ -918,7 +1108,8 @@ export const CARAVAN: Theme = {
     pen.setTransform(1, 0, 0, 1, 0, 0);
     pen.clearRect(0, 0, cw, ch);
     pen.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // Tiles: terrain, a tint of the owner's color, and a terrain mark.
+    // Tiles: terrain, a tint of the owner's color, the season, and a mark.
+    const cal = calendar();
     const list = [...tiles.entries()].map(([k, tl]) => ({ k, tl, c: tileCenter(tl.q, tl.r) }));
     for (const { k, tl, c } of list) {
       const pts = tilePath(c, 0.97);
@@ -929,6 +1120,16 @@ export const CARAVAN: Theme = {
       pen.fillStyle = rgba(TERRAIN[tl.terrain], 0.8 * dim * s.fog);
       pen.fill();
       if (city) { pen.fillStyle = rgba(city.color, 0.16 * dim * s.fog); pen.fill(); }
+      // The season: snow at high latitudes in winter, orange forests in
+      // autumn, greener land in spring, brighter dry land in summer.
+      if (tl.land && tl.terrain !== 'ice') {
+        const local = seasonAt(tl.lat, cal.season), a = Math.abs(tl.lat);
+        const tint = local === 3 && a > 40 ? ['#f2f6fa', Math.min(0.6, 0.2 + (a - 40) / 30)]
+          : local === 2 && (tl.terrain === 'forest' || tl.terrain === 'grass') ? ['#d0782a', 0.35]
+          : local === 0 && (tl.terrain === 'grass' || tl.terrain === 'plains' || tl.terrain === 'forest') ? ['#7fe36a', 0.14]
+          : local === 1 && (tl.terrain === 'desert' || tl.terrain === 'plains' || tl.terrain === 'sand') ? ['#ffd27a', 0.14] : undefined;
+        if (tint) { pen.fillStyle = rgba(tint[0], tint[1] * dim * s.fog); pen.fill(); }
+      }
       if (tl.terrain !== 'volcano' && (tl.terrain !== 'deep' || hash(k) < 0.2)) terrainMark(tl.terrain, s.x, s.y, s.f, dim * s.fog, hash(k), t);
     }
 
@@ -982,7 +1183,7 @@ export const CARAVAN: Theme = {
   }
   function mapKey(fc) {
     const q = p => Math.round(p.x * 4) + ':' + Math.round(p.y * 4);
-    return [q(screen(-OX, -OY, 0)), q(screen(OX, -OY, 0)), q(screen(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || ''].join(' ');
+    return [q(screen(-OX, -OY, 0)), q(screen(OX, -OY, 0)), q(screen(-OX, OY, 0)), Math.round(cam.r), W, H, dpr, mapGen, fc || '', calendar().n].join(' ');
   }
 
   function draw(now) {
@@ -1010,6 +1211,7 @@ export const CARAVAN: Theme = {
     drawRivers(inFocus, t, true);
 
     drawChanges(now, t);
+    drawDisasters(t);
     drawVolcano(t);
 
     // Cities and houses, far ones first.
@@ -1096,6 +1298,7 @@ export const CARAVAN: Theme = {
     drawClouds(t);
     drawLabels(order, near, fc, inFocus, now, n => (n.kind === 'hub' ? 26 : 12) * n.sf);
     drawTally(now);
+    drawCalendar();
   }
 
 `,
