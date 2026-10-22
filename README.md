@@ -12,7 +12,7 @@ Armory has five themes:
 | `orbit` | A solar system. Hubs are stars, items orbit their parents, and their children orbit them as moons. At rest, the bodies move under Newtonian gravity. |
 | `hive` | One honeycomb. Each item is a hex cell, and the size of its body comes from its data. Bees fly to the files that tools use. At rest, bees wander and dance. |
 | `race` | A racetrack with one lane per colony. Items are pennants along the lanes, and sad red horses gallop laps. A file use sends a horse to that post. |
-| `caravan` | One town per colony, joined by dirt roads. Sad red horses carry crates between towns and bring a red envelope to each file that a tool uses. |
+| `caravan` | A hex map, as in a strategy game. Each colony is a territory with a city and a border, with open land (forest, hills, water, mountains) between territories. Sad red horses carry crates along the roads and bring a red envelope to each file that a tool uses. |
 
 ## What it shows
 
