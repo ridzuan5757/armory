@@ -1,19 +1,21 @@
-// Theme 5, caravan: a hex map, as in a strategy game. Each colony is a
-// territory with a city (the hub) and one tile per item, inside a border in
-// its color. Two tiles of open land lie between territories, with terrain:
-// grassland, plains, forest, hills, water and mountains. Roads run tile by
-// tile from city to city; horses carry crates along them, bring a red
-// envelope to each file a tool uses, and swarm to a glowing file in shades.
+// Theme 5, caravan: a world first, then the colonies on it. A diamond-square
+// height map and a moisture map make one island continent with seas, beaches,
+// deserts, plains, grassland, forests, hills, mountains, snow peaks and a
+// volcano on the highest peak. Rivers flow from the heights to the sea. Each
+// colony gets a city on good land and grows a territory by travel cost, so
+// borders follow coasts and bend around mountains. Horses plan routes with A*
+// over the terrain, take boats over water, carry crates from city to city,
+// bring a red envelope to each file a tool uses, and swarm to a glowing file
+// in shades. At each file write the volcano erupts.
 import type { Theme } from '../web'
 
 import { HORSE_KIT } from './horse'
 
 export const CARAVAN: Theme = {
   name: 'caravan',
-  legend: 'one territory per colony · house size = data · horses carry crates between cities, bring envelopes to the files tools use and swarm there in shades · drag to turn · pinch or scroll to zoom',
+  legend: 'a fractal world · one territory per colony · house size = data · horses plan routes over the terrain, take boats, bring envelopes to the files tools use and swarm there in shades · the volcano erupts at each write · drag to turn · pinch or scroll to zoom',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false;
-  const ANGLE = { 'hub:skills': -90, 'hub:files': -18, 'hub:jobs': 54, 'hub:memory': 126, 'hub:sessions': 198 };
   const CITIES = ['hub:skills', 'hub:files', 'hub:jobs', 'hub:memory', 'hub:sessions'];
   function anchor(id) {
     const c = owner.get(id);
@@ -21,11 +23,12 @@ export const CARAVAN: Theme = {
   }
 
   // The hex map, in axial coordinates (q, r).
-  const TILE = 14, GAP = 2;
+  const TILE = 13, GAP = 2;
   const DIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
   const tileCenter = (q, r) => ({ x: TILE * Math.sqrt(3) * (q + r / 2), y: TILE * 1.5 * r, z: 0 });
   const tkey = (q, r) => q + ',' + r;
   const tdist = (a, b) => (Math.abs(a[0] - b[0]) + Math.abs(a[0] + a[1] - b[0] - b[1]) + Math.abs(a[1] - b[1])) / 2;
+  const unkey = k => k.split(',').map(Number);
   function ringAround(q, r, k) {
     const out = [];
     let cq = q + DIRS[4][0] * k, cr = r + DIRS[4][1] * k;
@@ -39,41 +42,237 @@ export const CARAVAN: Theme = {
     if (dq > dr && dq > ds) rq = -rr - rs; else if (dr > ds) rr = -rq - rs;
     return [rq, rr];
   }
-  // The hex tiles on a straight line between two tiles.
-  function hexLine(a, b) {
-    const n = tdist(a, b), out = [];
-    for (let i = 0; i <= n; i++) {
-      const u = n ? i / n : 0;
-      const p = tileCenter(a[0] + (b[0] - a[0]) * u + 1e-6, a[1] + (b[1] - a[1]) * u + 1e-6);
-      const h = toHex(p.x, p.y);
-      if (!out.length || tkey(...out[out.length - 1]) !== tkey(...h)) out.push(h);
+
+  // A small priority queue, for Dijkstra and A*.
+  function heap() {
+    const a = [];
+    return {
+      get size() { return a.length; },
+      push(k, p) {
+        a.push([p, k]);
+        let i = a.length - 1;
+        while (i > 0) { const j = (i - 1) >> 1; if (a[j][0] <= a[i][0]) break; [a[i], a[j]] = [a[j], a[i]]; i = j; }
+      },
+      pop() {
+        const top = a[0], last = a.pop();
+        if (a.length) {
+          a[0] = last;
+          let i = 0;
+          for (;;) {
+            const l = 2 * i + 1, r = l + 1;
+            let m = i;
+            if (l < a.length && a[l][0] < a[m][0]) m = l;
+            if (r < a.length && a[r][0] < a[m][0]) m = r;
+            if (m === i) break;
+            [a[i], a[m]] = [a[m], a[i]]; i = m;
+          }
+        }
+        return top;
+      },
+    };
+  }
+
+  // Fractal terrain by diamond-square on a (2^k + 1) grid: the corners get
+  // random heights; then, level by level, each square's middle gets the
+  // mean of its corners plus a random offset (the diamond step), each
+  // diamond's middle the mean of its neighbors plus an offset (the square
+  // step), and the offset shrinks by rough at each level. A fixed seed (2026,
+  // the Year of the Horse) gives the same world at each reload.
+  function rng(seed) {
+    return () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function diamondSquare(k, rough, seed) {
+    const n = (1 << k) + 1, g = new Float32Array(n * n), rnd = rng(seed);
+    const at = (x, y) => g[y * n + x];
+    const set = (x, y, v) => { g[y * n + x] = v; };
+    set(0, 0, rnd()); set(n - 1, 0, rnd()); set(0, n - 1, rnd()); set(n - 1, n - 1, rnd());
+    let step = n - 1, amp = 1;
+    while (step > 1) {
+      const half = step / 2;
+      for (let y = half; y < n; y += step) {
+        for (let x = half; x < n; x += step) {
+          set(x, y, (at(x - half, y - half) + at(x + half, y - half) + at(x - half, y + half) + at(x + half, y + half)) / 4 + (rnd() - 0.5) * amp);
+        }
+      }
+      for (let y = 0; y < n; y += half) {
+        for (let x = (y / half) % 2 === 0 ? half : 0; x < n; x += step) {
+          let sum = 0, c = 0;
+          if (x - half >= 0) { sum += at(x - half, y); c++; }
+          if (x + half < n) { sum += at(x + half, y); c++; }
+          if (y - half >= 0) { sum += at(x, y - half); c++; }
+          if (y + half < n) { sum += at(x, y + half); c++; }
+          set(x, y, sum / c + (rnd() - 0.5) * amp);
+        }
+      }
+      step = half;
+      amp *= rough;
     }
-    return out;
+    let lo = Infinity, hi = -Infinity;
+    for (const v of g) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    for (let i = 0; i < g.length; i++) g[i] = (g[i] - lo) / (hi - lo || 1);
+    return { n, g };
+  }
+  function sample(map, u, v) {
+    const x = Math.max(0, Math.min(1, u)) * (map.n - 1), y = Math.max(0, Math.min(1, v)) * (map.n - 1);
+    const x0 = Math.floor(x), y0 = Math.floor(y), x1 = Math.min(map.n - 1, x0 + 1), y1 = Math.min(map.n - 1, y0 + 1);
+    const fx = x - x0, fy = y - y0, g = map.g, n = map.n;
+    return (g[y0 * n + x0] * (1 - fx) + g[y0 * n + x1] * fx) * (1 - fy) + (g[y1 * n + x0] * (1 - fx) + g[y1 * n + x1] * fx) * fy;
+  }
+  const SEED = 2026, SPAN = TILE * Math.sqrt(3) * 34;
+  const HEIGHT = diamondSquare(7, 0.55, SEED), MOIST = diamondSquare(7, 0.6, SEED + 7);
+
+  const TERRAIN = {
+    deep: '#1f3f5c', water: '#2f5c7a', sand: '#c2b280', desert: '#b8955a', plains: '#7d8a45', grass: '#4f7a3f',
+    forest: '#3d6136', hills: '#7a6a48', mountain: '#6c6c6c', snow: '#d8dde3', volcano: '#4a3a35',
+  };
+  const WET = { deep: 1, water: 1 };
+  // Land a colony may hold: not water, snow or the volcano.
+  const HOLDABLE = { sand: 1, desert: 1, plains: 1, grass: 1, forest: 1, hills: 1, mountain: 1 };
+
+  // The world: every tile within a hex radius R of the middle. Height from
+  // the fractal map, pulled down toward the edge so the land is an island;
+  // the sea level makes about 55 % land. Height and moisture set the biome.
+  let tiles = new Map(), volcano = '', worldR = 0, rivers = [], riverSet = new Set();
+  function buildWorld(R) {
+    worldR = R;
+    tiles = new Map();
+    const raw = [];
+    for (let q = -R; q <= R; q++) {
+      for (let r = Math.max(-R, -q - R); r <= Math.min(R, -q + R); r++) {
+        const c = tileCenter(q, r);
+        const u = (c.x / SPAN + 1) / 2, v = (c.y / SPAN + 1) / 2;
+        const d = tdist([q, r], [0, 0]) / R;
+        raw.push({ q, r, e: sample(HEIGHT, u, v) - 0.9 * d * d, m: sample(MOIST, u, v) });
+      }
+    }
+    const es = raw.map(t => t.e).sort((a, b) => a - b);
+    const sea = es[Math.floor(es.length * 0.45)], top = es[es.length - 1];
+    // Moisture limits by share of the land, so every world has all four
+    // lowland biomes: the driest 12 % desert, then 30 % plains, 30 %
+    // grassland, and the wettest 28 % forest.
+    const ms = raw.filter(t => t.e >= sea).map(t => t.m).sort((a, b) => a - b);
+    const mq = f => ms[Math.min(ms.length - 1, Math.floor(ms.length * f))] ?? 0.5;
+    const dry = mq(0.12), mid = mq(0.42), wet = mq(0.72);
+    for (const t of raw) {
+      const h = (t.e - sea) / (top - sea || 1);
+      let terrain;
+      if (h < -0.25) terrain = 'deep';
+      else if (h < 0) terrain = 'water';
+      else if (h < 0.06) terrain = 'sand';
+      else if (h > 0.9) terrain = 'snow';
+      else if (h > 0.78) terrain = 'mountain';
+      else if (h > 0.6) terrain = 'hills';
+      else terrain = t.m < dry ? 'desert' : t.m < mid ? 'plains' : t.m < wet ? 'grass' : 'forest';
+      tiles.set(tkey(t.q, t.r), { q: t.q, r: t.r, h, m: t.m, terrain, city: '' });
+    }
+    let vh = -1;
+    for (const [k, tl] of tiles) if (tl.h > vh) { vh = tl.h; volcano = k; }
+    tiles.get(volcano).terrain = 'volcano';
+    // Rivers: from up to four high tiles at least five apart, downhill to the
+    // sea. In a hollow the river takes the lowest way on, three times at most.
+    rivers = [];
+    riverSet = new Set();
+    const highs = [...tiles.entries()].filter(([, tl]) => tl.h > 0.55 && tl.terrain !== 'volcano').sort((a, b) => b[1].h - a[1].h);
+    for (const [sk] of highs) {
+      if (rivers.length >= 4) break;
+      if ([...riverSet, volcano].some(k => tdist(unkey(k), unkey(sk)) < 5)) continue;
+      const path = [sk];
+      let cur = unkey(sk), pits = 0;
+      for (let step = 0; step < 40; step++) {
+        let best, low = Infinity;
+        for (const [dq, dr] of DIRS) {
+          const k = tkey(cur[0] + dq, cur[1] + dr);
+          if (!tiles.has(k) || path.includes(k)) continue;
+          if (tiles.get(k).h < low) { low = tiles.get(k).h; best = k; }
+        }
+        if (!best) break;
+        if (low >= tiles.get(tkey(...cur)).h && ++pits > 3) break;
+        path.push(best);
+        cur = unkey(best);
+        if (WET[tiles.get(best).terrain]) break;
+      }
+      if (path.length >= 4) { rivers.push(path); path.forEach(k => riverSet.add(k)); }
+    }
+    // Land by a river is wetter: a desert there turns to plains.
+    for (const k of riverSet) {
+      for (const [dq, dr] of [[0, 0], ...DIRS]) {
+        const [q, r] = unkey(k), tl = tiles.get(tkey(q + dq, r + dr));
+        if (tl && tl.terrain === 'desert') tl.terrain = 'plains';
+      }
+    }
   }
 
-  // Terrain from a fixed pattern of the tile's place: smooth enough that
-  // forests and hills come in patches. Water and mountains only in open land.
-  function heightOf(q, r) {
-    const p = tileCenter(q, r);
-    return Math.sin(p.x * 0.021 + 1.3) * Math.cos(p.y * 0.024 - 0.7) + 0.6 * Math.sin((p.x + p.y) * 0.013 + 2.1) + 0.25 * (hash(tkey(q, r)) - 0.5);
+  // The cost of entering a tile. Roads are fast; water needs a boat; a river
+  // costs extra to cross, except over a bridge (a road tile).
+  const COST = { deep: 2, water: 1.5, sand: 1, desert: 1.5, plains: 1, grass: 1, forest: 2, hills: 3, mountain: 6, snow: 8, volcano: 10 };
+  let roads = [], roadSet = new Set();
+  function costOf(k) {
+    const tl = tiles.get(k);
+    if (!tl) return Infinity;
+    if (WET[tl.terrain]) return COST[tl.terrain];
+    if (roadSet.has(k)) return 0.5;
+    return COST[tl.terrain] + (riverSet.has(k) ? 1.5 : 0);
   }
-  function terrainOf(q, r, open) {
-    const v = heightOf(q, r);
-    if (open && v < -0.95) return 'water';
-    if (open && v > 1.05) return 'mountain';
-    if (v > 0.55) return 'hills';
-    if (v > 0.1) return 'forest';
-    if (v > -0.45) return 'grass';
-    return 'plains';
+  // Dijkstra from one tile: the travel cost to every tile.
+  function costsFrom(start) {
+    const dist = new Map([[start, 0]]), q = heap();
+    q.push(start, 0);
+    while (q.size) {
+      const [d, k] = q.pop();
+      if (d > dist.get(k)) continue;
+      const [x, y] = unkey(k);
+      for (const [dq, dr] of DIRS) {
+        const nk = tkey(x + dq, y + dr);
+        if (!tiles.has(nk)) continue;
+        const nd = d + costOf(nk);
+        if (nd < (dist.get(nk) ?? Infinity)) { dist.set(nk, nd); q.push(nk, nd); }
+      }
+    }
+    return dist;
   }
-  const TERRAIN = { grass: '#4f7a3f', plains: '#7d8a45', forest: '#3d6136', hills: '#7a6a48', water: '#2f5c7a', mountain: '#6c6c6c' };
+  // A* over the tiles. Plans are kept until the map changes.
+  const plans = new Map();
+  function findPath(from, to) {
+    const memo = plans.get(from + '>' + to);
+    if (memo) return memo;
+    const goal = unkey(to), cost = new Map([[from, 0]]), came = new Map(), q = heap();
+    q.push(from, 0);
+    let path = [from];
+    while (q.size) {
+      const [, cur] = q.pop();
+      if (cur === to) {
+        let k = cur;
+        path = [k];
+        while (came.has(k)) { k = came.get(k); path.push(k); }
+        path.reverse();
+        break;
+      }
+      const [x, y] = unkey(cur);
+      for (const [dq, dr] of DIRS) {
+        const nk = tkey(x + dq, y + dr);
+        if (!tiles.has(nk)) continue;
+        const g = cost.get(cur) + costOf(nk);
+        if (g < (cost.get(nk) ?? Infinity)) { cost.set(nk, g); came.set(nk, cur); q.push(nk, g + 0.5 * tdist([x + dq, y + dr], goal)); }
+      }
+    }
+    plans.set(from + '>' + to, path);
+    return path;
+  }
 
-  // Territories. Each city sits out from the middle by the size of its
-  // colony; colonies take turns, one tile each, and a tile within GAP of
-  // another colony's land stays open, so two tiles of open land lie between
-  // borders. A tile takes the free tile nearest its parent's, then nearest
-  // its city and the middle, so a folder and its files form one district.
-  let owner = new Map(), tiles = new Map(), roads = [], roadSet = new Set(), rivers = [], riverSet = new Set(), sizes = new Map(), layoutGen = -1, layoutSize = -1;
+  // Colonies on the world. The world grows with the data (more items, a
+  // larger island). City sites: the best land for a city (good biome, by a
+  // river, on the coast, with room around it), five tiles or more apart.
+  // The largest colony gets the best site. Then the colonies take turns, one
+  // item each: an item takes the free tile near its parent's tile that is
+  // cheapest to reach from its city, and no tile within GAP of another
+  // colony; so a folder and its files form one district, and borders follow
+  // the land.
+  let owner = new Map(), sizes = new Map(), layoutGen = -1, layoutSize = -1;
   function layout() {
     const kids = childrenMap();
     const size = new Map();
@@ -85,141 +284,111 @@ export const CARAVAN: Theme = {
       size.set(id, c);
       return c;
     };
-    const rings = n => { let k = 0; while (1 + 3 * k * (k + 1) < n) k++; return k; };
-    const land = new Map();
-    const near = (cell, colony) => {
-      for (let k = 1; k <= GAP; k++) for (const c of ringAround(cell[0], cell[1], k)) {
-        const o = land.get(tkey(c[0], c[1]));
-        if (o && o !== colony) return true;
+    const cities = CITIES.filter(c => nodes.has(c));
+    const items = cities.reduce((s, c) => s + count(c), 0);
+    let R = 10;
+    while (R < 30 && 0.5 * (1 + 3 * R * (R + 1)) < items * 2.2 + 40) R++;
+    if (R !== worldR) buildWorld(R);
+    roads = []; roadSet = new Set(); plans.clear();
+    for (const tl of tiles.values()) tl.city = '';
+
+    // City sites.
+    const score = new Map();
+    for (const [k, tl] of tiles) {
+      if (!HOLDABLE[tl.terrain] || tl.terrain === 'mountain') continue;
+      const [q, r] = unkey(k);
+      let s = { grass: 3, plains: 3, forest: 2, sand: 2, desert: 1, hills: 1.5 }[tl.terrain] || 0;
+      if ([[0, 0], ...DIRS].some(([dq, dr]) => riverSet.has(tkey(q + dq, r + dr)))) s += 3;
+      if (DIRS.some(([dq, dr]) => { const n = tiles.get(tkey(q + dq, r + dr)); return n && WET[n.terrain]; })) s += 2;
+      let room = 0;
+      for (let d = 1; d <= 3; d++) for (const c of ringAround(q, r, d)) { const n = tiles.get(tkey(...c)); if (n && HOLDABLE[n.terrain]) room++; }
+      score.set(k, s + 0.15 * room + 0.01 * hash(k));
+    }
+    const ranked = [...score.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+    let sites = [];
+    for (let gap = Math.max(5, Math.round(R * 0.55)); gap >= 2 && sites.length < cities.length; gap--) {
+      sites = [];
+      for (const k of ranked) {
+        if (sites.length >= cities.length) break;
+        if (sites.every(s => tdist(unkey(s), unkey(k)) >= gap)) sites.push(k);
+      }
+    }
+    const bySize = cities.slice().sort((a, b) => count(b) - count(a));
+    const next = new Map(), land = new Map();
+    bySize.forEach((city, i) => {
+      const k = sites[i] || ranked[i];
+      const [q, r] = unkey(k);
+      next.set(city, { q, r, city });
+      land.set(k, city);
+    });
+    const cost = new Map(bySize.map(city => [city, costsFrom(tkey(next.get(city).q, next.get(city).r))]));
+
+    // Territories, by turns.
+    const nearOther = (cell, city) => {
+      for (let d = 1; d <= GAP; d++) for (const c of ringAround(cell[0], cell[1], d)) {
+        const o = land.get(tkey(...c));
+        if (o && o !== city) return true;
       }
       return false;
     };
-    const next = new Map(), cols = [];
-    for (const city of CITIES) {
-      if (!nodes.has(city)) continue;
-      const a = ANGLE[city] * Math.PI / 180, d = TILE * Math.sqrt(3) * (rings(count(city)) + GAP + 1);
-      const at = toHex(Math.cos(a) * d, Math.sin(a) * d);
-      land.set(tkey(...at), city);
-      next.set(city, { q: at[0], r: at[1], city });
+    const cols = bySize.map(city => {
       const order = [];
       const walk = id => {
         for (const c of (kids.get(id) || []).slice().sort((p, q) => count(q.id) - count(p.id) || p.id.localeCompare(q.id))) { order.push([c.id, id]); walk(c.id); }
       };
       walk(city);
-      cols.push({ city, at, order, i: 0 });
-    }
+      return { city, order, i: 0 };
+    });
     for (let left = true; left;) {
       left = false;
       for (const col of cols) {
         if (col.i >= col.order.length) continue;
         left = true;
         const [id, parent] = col.order[col.i++];
-        const pc = next.get(parent);
-        if (!pc) continue;
+        const pc = next.get(parent) || next.get(col.city);
+        const toCity = cost.get(col.city);
         let best;
-        for (let k = 1; k < 60 && !best; k++) {
-          let score = Infinity;
-          for (const cell of ringAround(pc.q, pc.r, k)) {
-            if (land.has(tkey(...cell)) || near(cell, col.city)) continue;
-            const s = tdist(cell, col.at) + 0.4 * tdist(cell, [0, 0]) + 0.001 * hash(id + cell);
-            if (s < score) { score = s; best = cell; }
+        // First within the rules; then without the gap; then any free tile.
+        for (const strict of [2, 1, 0]) {
+          let bs = Infinity;
+          for (let k = 1; k <= (strict ? 10 : R * 2); k++) {
+            for (const cell of ringAround(pc.q, pc.r, k)) {
+              const ck = tkey(...cell), tl = tiles.get(ck);
+              if (!tl || land.has(ck)) continue;
+              if (strict && !HOLDABLE[tl.terrain]) continue;
+              if (strict === 2 && nearOther(cell, col.city)) continue;
+              const s = k + 0.25 * (toCity.get(ck) ?? 99) + 0.001 * hash(id + ck);
+              if (s < bs) { bs = s; best = cell; }
+            }
+            if (best && k > 2) break;
           }
+          if (best) break;
         }
         if (!best) continue;
         land.set(tkey(...best), col.city);
         next.set(id, { q: best[0], r: best[1], city: col.city });
       }
     }
+    for (const [k, city] of land) { const tl = tiles.get(k); if (tl) tl.city = city; }
     owner = next;
-    // Every tile on the map: the land, and open land GAP + 1 rings around it.
-    tiles = new Map();
-    for (const [k, city] of land) { const [q, r] = k.split(',').map(Number); tiles.set(k, { q, r, city, terrain: terrainOf(q, r, false) }); }
-    for (const [k, city] of land) {
-      const [q, r] = k.split(',').map(Number);
-      for (let d = 1; d <= GAP + 1; d++) for (const c of ringAround(q, r, d)) {
-        const ck = tkey(...c);
-        if (!tiles.has(ck)) tiles.set(ck, { q: c[0], r: c[1], city: '', terrain: terrainOf(c[0], c[1], true) });
-      }
+
+    // Roads: around the cities in order of angle, each the cheapest route on
+    // land (water tiles on a road are a ferry).
+    const ring = cities.filter(c => next.has(c)).sort((a, b) => {
+      const pa = tileCenter(next.get(a).q, next.get(a).r), pb = tileCenter(next.get(b).q, next.get(b).r);
+      return Math.atan2(pa.y, pa.x) - Math.atan2(pb.y, pb.x);
+    });
+    for (let i = 0; i < ring.length; i++) {
+      const a = next.get(ring[i]), b = next.get(ring[(i + 1) % ring.length]);
+      const path = findPath(tkey(a.q, a.r), tkey(b.q, b.r));
+      roads.push(path);
     }
-    // Roads: from each city to the next one round the pentagon, tile by tile.
-    roads = [];
-    roadSet = new Set();
-    const at = CITIES.map(c => next.get(c)).filter(Boolean);
-    for (let i = 0; i < at.length; i++) {
-      const a = at[i], b = at[(i + 1) % at.length];
-      const line = hexLine([a.q, a.r], [b.q, b.r]);
-      line.forEach(c => roadSet.add(tkey(...c)));
-      roads.push(line.map(([q, r]) => tileCenter(q, r)));
-    }
-    // Rivers: from up to three high tiles in open land, at least five tiles
-    // apart, downhill tile by tile until water, the map's edge or a pit.
-    rivers = [];
-    riverSet = new Set();
-    const highs = [...tiles.values()].filter(tl => !tl.city).sort((a, b) => heightOf(b.q, b.r) - heightOf(a.q, a.r));
-    for (const src of highs) {
-      if (rivers.length >= 3) break;
-      if ([...riverSet].some(k => tdist(k.split(',').map(Number), [src.q, src.r]) < 5)) continue;
-      const path = [tkey(src.q, src.r)];
-      let cur = [src.q, src.r];
-      for (let step = 0; step < 30; step++) {
-        let best, low = heightOf(cur[0], cur[1]);
-        for (const [dq, dr] of DIRS) {
-          const c = [cur[0] + dq, cur[1] + dr], k = tkey(...c);
-          if (!tiles.has(k) || path.includes(k)) continue;
-          const v = heightOf(...c);
-          if (v < low) { low = v; best = c; }
-        }
-        if (!best) break;
-        cur = best;
-        path.push(tkey(...cur));
-        if (tiles.get(tkey(...cur)).terrain === 'water') break;
-      }
-      if (path.length >= 5) { rivers.push(path); path.forEach(k => riverSet.add(k)); }
-    }
+    for (const path of roads) for (const k of path) if (!WET[tiles.get(k).terrain]) roadSet.add(k);
     plans.clear();
     sizes = bodySizes();
     for (const n of nodes.values()) if (owner.has(n.id)) n.settle = 0;
   }
 
-  // The cost of entering a tile. Roads are fast; water needs a boat; a river
-  // costs extra to cross, except over a bridge (a road tile).
-  const COST = { grass: 1, plains: 1, forest: 2, hills: 3, mountain: 6, water: 1.5 };
-  function costOf(k) {
-    const tl = tiles.get(k);
-    if (!tl) return Infinity;
-    if (tl.terrain === 'water') return COST.water;
-    if (roadSet.has(k)) return 0.5;
-    return COST[tl.terrain] + (riverSet.has(k) ? 1.5 : 0);
-  }
-  // A* over the tiles, with those costs. Plans are kept until the map changes.
-  const plans = new Map();
-  function findPath(from, to) {
-    const memo = plans.get(from + '>' + to);
-    if (memo) return memo;
-    const goal = to.split(',').map(Number);
-    const open = new Map([[from, 0]]), came = new Map(), cost = new Map([[from, 0]]);
-    let path = [from];
-    while (open.size) {
-      let cur, best = Infinity;
-      for (const [k, f] of open) if (f < best) { best = f; cur = k; }
-      if (cur === to) {
-        path = [cur];
-        while (came.has(cur)) { cur = came.get(cur); path.push(cur); }
-        path.reverse();
-        break;
-      }
-      open.delete(cur);
-      const [q, r] = cur.split(',').map(Number);
-      for (const [dq, dr] of DIRS) {
-        const nk = tkey(q + dq, r + dr);
-        if (!tiles.has(nk)) continue;
-        const g = cost.get(cur) + costOf(nk);
-        if (g < (cost.get(nk) ?? Infinity)) { cost.set(nk, g); came.set(nk, cur); open.set(nk, g + 0.5 * tdist([q + dq, r + dr], goal)); }
-      }
-    }
-    plans.set(from + '>' + to, path);
-    return path;
-  }
   // The tile under a point, or the nearest tile on the map.
   function tileAt(x, y) {
     const k = tkey(...toHex(x, y));
@@ -228,7 +397,7 @@ export const CARAVAN: Theme = {
     for (const [tk, tl] of tiles) { const c = tileCenter(tl.q, tl.r), d = Math.hypot(c.x - x, c.y - y); if (d < bd) { bd = d; best = tk; } }
     return best;
   }
-  const centerOf = k => { const [q, r] = k.split(',').map(Number); return tileCenter(q, r); };
+  const centerOf = k => { const [q, r] = unkey(k); return tileCenter(q, r); };
 
   // Caravans: one horse per city and one per running job or busy session.
   // Each plans its route with A* and walks it tile by tile, at a speed that
@@ -237,7 +406,7 @@ export const CARAVAN: Theme = {
   // each; the files city's horse brings an envelope to each new file use; in
   // a swarm every horse plans a route to the glowing house.
   const horses = new Map();
-  let lastSim = 0, rest = 0;
+  let lastSim = 0, rest = 0, lastWrite = 0;
   function simulate() {
     if (gen !== layoutGen || nodes.size !== layoutSize) { layout(); layoutGen = gen; layoutSize = nodes.size; }
     const now = performance.now();
@@ -253,6 +422,8 @@ export const CARAVAN: Theme = {
       n.settle = Math.min(1, (n.settle || 0) + 0.04);
       const k = 0.12 + 0.88 * n.settle;
       n.x += (c.x - n.x) * k; n.y += (c.y - n.y) * k; n.z += (c.z - n.z) * k;
+      // The newest write or new file, for the volcano.
+      if (n.type === 'file' && (n.op === 'write' || n.op === 'new') && n.at > lastWrite) lastWrite = n.at;
     }
     const cities = CITIES.filter(c => owner.has(c));
     if (!cities.length || !tiles.size) return;
@@ -285,8 +456,8 @@ export const CARAVAN: Theme = {
       if (target && owner.has(target.id)) { const o = owner.get(target.id); goal = tkey(o.q, o.r); mode = 'swarm'; }
       else if (h.trip) { const o = owner.get(h.trip.id); goal = tkey(o.q, o.r); mode = 'trip'; }
       else { const o = owner.get(cities[h.city % cities.length]); goal = tkey(o.q, o.r); mode = 'travel'; }
-      if (h.goal !== goal) {
-        h.goal = goal;
+      if (h.goal !== goal || h.gen !== layoutGen) {
+        h.goal = goal; h.gen = layoutGen;
         h.path = findPath(tileAt(h.x, h.y), goal);
         h.pi = 0; h.u = 0;
       }
@@ -312,7 +483,7 @@ export const CARAVAN: Theme = {
       h.vx = (nx - h.x) / Math.max(dt, 0.001); h.vy = (ny - h.y) / Math.max(dt, 0.001);
       h.x = nx; h.y = ny;
       const here = tiles.get(tileAt(h.x, h.y));
-      h.boat = !!here && here.terrain === 'water';
+      h.boat = !!here && !!WET[here.terrain];
       h.carry = mode === 'trip' ? 'envelope' : 'crate';
       const arrived = mode === 'swarm' && h.pi >= h.path.length - 1;
       h.shade = (h.shade || 0) + ((arrived ? 1 : 0) - (h.shade || 0)) * Math.min(1, dt * 2.5);
@@ -331,8 +502,8 @@ export const CARAVAN: Theme = {
   }
   const fillPath = pts => { ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath(); };
 
-  // A small mark for the terrain of a tile.
-  function terrainMark(kind, x, y, f, fade, seed) {
+  // A small mark for the terrain of a tile. Waves move with time.
+  function terrainMark(kind, x, y, f, fade, seed, t) {
     const u = TILE * f;
     if (kind === 'forest') {
       ctx.fillStyle = rgba('#2a4a26', 0.9 * fade);
@@ -342,14 +513,78 @@ export const CARAVAN: Theme = {
     } else if (kind === 'hills') {
       ctx.strokeStyle = rgba('#5a4a30', 0.9 * fade); ctx.lineWidth = Math.max(0.6, 0.08 * u);
       for (const dx of [-0.25, 0.2]) { ctx.beginPath(); ctx.arc(x + dx * u, y + 0.15 * u, 0.22 * u, Math.PI, 0); ctx.stroke(); }
-    } else if (kind === 'water') {
-      ctx.strokeStyle = rgba('#a9cbe6', 0.5 * fade); ctx.lineWidth = Math.max(0.6, 0.06 * u);
-      for (const dy of [-0.15, 0.15]) { ctx.beginPath(); ctx.moveTo(x - 0.35 * u, y + dy * u); ctx.quadraticCurveTo(x - 0.1 * u, y + (dy - 0.12) * u, x + 0.1 * u, y + dy * u); ctx.quadraticCurveTo(x + 0.25 * u, y + (dy + 0.12) * u, x + 0.35 * u, y + dy * u); ctx.stroke(); }
-    } else if (kind === 'mountain') {
-      ctx.fillStyle = rgba('#8c8c8c', 0.95 * fade);
+    } else if (kind === 'water' || kind === 'deep') {
+      const ph = calm ? 0 : Math.sin(t * 1.3 + seed * 6.28) * 0.12;
+      ctx.strokeStyle = rgba('#a9cbe6', (kind === 'deep' ? 0.3 : 0.5) * fade); ctx.lineWidth = Math.max(0.6, 0.06 * u);
+      for (const dy of [-0.15, 0.15]) {
+        const o = (dy + ph) * u;
+        ctx.beginPath(); ctx.moveTo(x - 0.35 * u, y + o); ctx.quadraticCurveTo(x - 0.1 * u, y + o - 0.12 * u, x + 0.1 * u, y + o); ctx.quadraticCurveTo(x + 0.25 * u, y + o + 0.12 * u, x + 0.35 * u, y + o); ctx.stroke();
+      }
+    } else if (kind === 'mountain' || kind === 'snow') {
+      ctx.fillStyle = rgba(kind === 'snow' ? '#a8adb3' : '#8c8c8c', 0.95 * fade);
       ctx.beginPath(); ctx.moveTo(x - 0.45 * u, y + 0.3 * u); ctx.lineTo(x - 0.05 * u, y - 0.45 * u); ctx.lineTo(x + 0.4 * u, y + 0.3 * u); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = rgba('#e8ecf0', 0.9 * fade);
-      ctx.beginPath(); ctx.moveTo(x - 0.17 * u, y - 0.22 * u); ctx.lineTo(x - 0.05 * u, y - 0.45 * u); ctx.lineTo(x + 0.08 * u, y - 0.22 * u); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = rgba('#f4f7fa', 0.95 * fade);
+      const cap = kind === 'snow' ? 0.05 : -0.22;
+      ctx.beginPath(); ctx.moveTo(x - 0.05 * u - (cap + 0.45) * 0.53 * u, y + cap * u); ctx.lineTo(x - 0.05 * u, y - 0.45 * u); ctx.lineTo(x - 0.05 * u + (cap + 0.45) * 0.6 * u, y + cap * u); ctx.closePath(); ctx.fill();
+    } else if (kind === 'desert') {
+      ctx.strokeStyle = rgba('#8a6a38', 0.8 * fade); ctx.lineWidth = Math.max(0.6, 0.06 * u);
+      for (const dy of [-0.1, 0.2]) { ctx.beginPath(); ctx.arc(x, y + dy * u + 0.3 * u, 0.35 * u, Math.PI * 1.2, Math.PI * 1.8); ctx.stroke(); }
+    } else if (kind === 'sand') {
+      ctx.fillStyle = rgba('#9a8a5a', 0.7 * fade);
+      for (const [dx, dy] of [[-0.2, -0.1], [0.15, 0.05], [-0.05, 0.25]]) { ctx.beginPath(); ctx.arc(x + dx * u, y + dy * u, Math.max(0.5, 0.05 * u), 0, 6.2832); ctx.fill(); }
+    } else if (kind === 'grass' || kind === 'plains') {
+      ctx.strokeStyle = rgba(kind === 'grass' ? '#3c6430' : '#5f6a33', 0.8 * fade); ctx.lineWidth = Math.max(0.5, 0.05 * u);
+      for (const dx of [-0.2, 0.15]) { ctx.beginPath(); ctx.moveTo(x + dx * u, y + 0.15 * u); ctx.lineTo(x + (dx - 0.05) * u, y - 0.05 * u); ctx.moveTo(x + dx * u, y + 0.15 * u); ctx.lineTo(x + (dx + 0.06) * u, y - 0.03 * u); ctx.stroke(); }
+    }
+  }
+
+  // The volcano: a dark cone with a glowing crater and a column of smoke.
+  // At each file write it erupts: lava bursts from the crater for 4 s.
+  function drawVolcano(t) {
+    if (!volcano) return;
+    const c = centerOf(volcano), base = screen(c.x, c.y, 0), u = TILE * base.f;
+    const burst = Math.max(0, 1 - (Date.now() - lastWrite) / 4000);
+    ctx.fillStyle = 'rgba(64,52,48,0.98)';
+    ctx.beginPath(); ctx.moveTo(base.x - 0.75 * u, base.y + 0.4 * u); ctx.lineTo(base.x - 0.18 * u, base.y - 0.75 * u); ctx.lineTo(base.x + 0.18 * u, base.y - 0.75 * u); ctx.lineTo(base.x + 0.75 * u, base.y + 0.4 * u); ctx.closePath(); ctx.fill();
+    const cx = base.x, cy = base.y - 0.75 * u;
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, u * (0.6 + 1.6 * burst));
+    glow.addColorStop(0, 'rgba(255,120,40,' + (0.6 + 0.4 * burst) + ')');
+    glow.addColorStop(1, 'rgba(255,60,20,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(cx, cy, u * (0.6 + 1.6 * burst), 0, 6.2832); ctx.fill();
+    if (calm) return;
+    // Smoke: puffs that rise, grow and fade.
+    for (let i = 0; i < 5; i++) {
+      const k = (t * 0.25 + i / 5) % 1;
+      ctx.fillStyle = 'rgba(150,150,150,' + (0.35 * (1 - k)) + ')';
+      ctx.beginPath(); ctx.arc(cx + Math.sin(k * 4 + i) * u * 0.4, cy - k * u * 2.6, u * (0.18 + 0.4 * k), 0, 6.2832); ctx.fill();
+    }
+    // Lava: bright drops thrown up and out, falling back down the cone.
+    if (burst > 0) {
+      for (let i = 0; i < 16; i++) {
+        const k = (t * 0.9 + i / 16) % 1, a = (hash('lava' + i) - 0.5) * 2.2;
+        const x = cx + Math.sin(a) * k * u * 1.6, y = cy - (k * 2.4 - k * k * 3.2) * u;
+        ctx.fillStyle = 'rgba(255,' + Math.round(90 + 120 * (1 - k)) + ',30,' + burst + ')';
+        ctx.beginPath(); ctx.arc(x, y, Math.max(0.8, u * 0.09), 0, 6.2832); ctx.fill();
+      }
+    }
+  }
+
+  // Clouds drift over the map from west to east, with soft shadows below.
+  function drawClouds(t) {
+    if (!worldR) return;
+    const w = TILE * Math.sqrt(3) * (worldR + 4);
+    for (let i = 0; i < 5; i++) {
+      const sx = ((hash('cx' + i) * 2 - 1) * w + t * (4 + 3 * hash('cv' + i)) + w * 3) % (2 * w) - w;
+      const sy = (hash('cy' + i) * 2 - 1) * w * 0.8;
+      const shade = screen(sx + 10, sy + 14, 0), top = screen(sx, sy, 60);
+      const r = TILE * (1.6 + 1.4 * hash('cr' + i));
+      ctx.fillStyle = 'rgba(0,0,0,0.07)';
+      ctx.beginPath(); ctx.ellipse(shade.x, shade.y, r * shade.f * 1.4, r * shade.f * 0.6, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = 'rgba(240,244,248,0.16)';
+      for (const [dx, dy, s] of [[-0.6, 0.1, 0.7], [0, -0.15, 1], [0.6, 0.1, 0.75]]) {
+        ctx.beginPath(); ctx.ellipse(top.x + dx * r * top.f, top.y + dy * r * top.f, r * top.f * s, r * top.f * s * 0.55, 0, 0, 6.2832); ctx.fill();
+      }
     }
   }
 
@@ -380,55 +615,25 @@ export const CARAVAN: Theme = {
       if (e.b === hover.id) near.add(e.a);
     }
 
-    // Tiles: terrain, a tint of the owner's color, and a terrain mark. Open
-    // land is darker, and fades out toward the map's edge.
-    const list = [...tiles.values()].map(tl => ({ tl, c: tileCenter(tl.q, tl.r) }));
-    for (const { tl, c } of list) {
+    // Tiles: terrain, a tint of the owner's color, and a terrain mark.
+    const list = [...tiles.entries()].map(([k, tl]) => ({ k, tl, c: tileCenter(tl.q, tl.r) }));
+    for (const { k, tl, c } of list) {
       const pts = tilePath(c, 0.97);
       const s = screen(c.x, c.y, 0);
       const city = tl.city && nodes.get(tl.city);
-      const dim = city ? (inFocus(city) ? 1 : 0.45) : 0.55;
-      let edge = 1;
-      if (!tl.city) {
-        let d = 9;
-        for (const [, o] of owner) d = Math.min(d, tdist([tl.q, tl.r], [o.q, o.r]));
-        edge = d >= GAP + 1 ? 0.45 : 1;
-      }
+      const dim = city ? (inFocus(city) ? 1 : 0.5) : 0.8;
       fillPath(pts);
-      ctx.fillStyle = rgba(TERRAIN[tl.terrain], 0.75 * dim * edge * s.fog);
+      ctx.fillStyle = rgba(TERRAIN[tl.terrain], 0.8 * dim * s.fog);
       ctx.fill();
       if (city) { ctx.fillStyle = rgba(city.color, 0.16 * dim * s.fog); ctx.fill(); }
-      terrainMark(tl.terrain, s.x, s.y, s.f, dim * edge * s.fog, hash(tkey(tl.q, tl.r)));
-    }
-
-    // Borders: a thick line in the owner's color on each tile edge that
-    // meets another owner or open land.
-    ctx.lineCap = 'round';
-    for (const { tl, c } of list) {
-      if (!tl.city) continue;
-      const city = nodes.get(tl.city);
-      if (!city) continue;
-      const pts = tilePath(c, 0.9);
-      for (let i = 0; i < 6; i++) {
-        // Edge i joins corners i and i + 1. The neighbor across it sits at
-        // twice the edge's middle from this tile's center.
-        const mx = (Math.cos(Math.PI / 6 + i * Math.PI / 3) + Math.cos(Math.PI / 6 + (i + 1) * Math.PI / 3)) / 2;
-        const my = (Math.sin(Math.PI / 6 + i * Math.PI / 3) + Math.sin(Math.PI / 6 + (i + 1) * Math.PI / 3)) / 2;
-        const nb = toHex(c.x + mx * TILE * 2, c.y + my * TILE * 2);
-        const other = tiles.get(tkey(...nb));
-        if (other && other.city === tl.city) continue;
-        const a = pts[i], b = pts[(i + 1) % 6];
-        ctx.strokeStyle = rgba(city.color, 0.9 * (inFocus(city) ? 1 : 0.45) * a.fog);
-        ctx.lineWidth = Math.max(1.5, 2.6 * a.f);
-        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-      }
+      if (tl.terrain !== 'volcano') terrainMark(tl.terrain, s.x, s.y, s.f, dim * s.fog, hash(k), t);
     }
 
     // Rivers: winding blue lines through their tiles.
     ctx.lineCap = 'round';
     for (const river of rivers) {
       const pts = river.map(k => { const c = centerOf(k); return screen(c.x, c.y, 0); });
-      ctx.strokeStyle = 'rgba(90,166,214,0.85)';
+      ctx.strokeStyle = 'rgba(90,166,214,0.9)';
       ctx.lineWidth = Math.max(1.5, 3 * (pts[0] ? pts[0].f : 1));
       ctx.beginPath();
       pts.forEach((p, j) => {
@@ -439,12 +644,38 @@ export const CARAVAN: Theme = {
       ctx.stroke();
     }
 
-    // Roads: a dirt band with ruts, tile by tile from city to city.
+    // Borders: a thick line in the owner's color on each tile edge that
+    // meets another owner or unheld land.
+    for (const { tl, c } of list) {
+      if (!tl.city) continue;
+      const city = nodes.get(tl.city);
+      if (!city) continue;
+      const pts = tilePath(c, 0.9);
+      for (let i = 0; i < 6; i++) {
+        // Edge i joins corners i and i + 1. The neighbor across it sits at
+        // twice the edge's middle from this tile's center.
+        const mx = (Math.cos(Math.PI / 6 + i * Math.PI / 3) + Math.cos(Math.PI / 6 + (i + 1) * Math.PI / 3)) / 2;
+        const my = (Math.sin(Math.PI / 6 + i * Math.PI / 3) + Math.sin(Math.PI / 6 + (i + 1) * Math.PI / 3)) / 2;
+        const other = tiles.get(tkey(...toHex(c.x + mx * TILE * 2, c.y + my * TILE * 2)));
+        if (other && other.city === tl.city) continue;
+        const a = pts[i], b = pts[(i + 1) % 6];
+        ctx.strokeStyle = rgba(city.color, 0.9 * (inFocus(city) ? 1 : 0.45) * a.fog);
+        ctx.lineWidth = Math.max(1.5, 2.6 * a.f);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+    }
+
+    // Roads: a dirt band with ruts on land; a dashed ferry line over water.
     for (const road of roads) {
-      const pts = road.map(p => screen(p.x, p.y, 0));
-      const stroke = (w, color, dash) => { ctx.setLineDash(dash); ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath(); pts.forEach((p, j) => (j ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.stroke(); };
-      stroke(Math.max(2, 4 * (pts[0] ? pts[0].f : 1)), 'rgba(160,125,80,0.75)', []);
-      stroke(1, 'rgba(90,65,40,0.7)', [3, 4]);
+      for (let j = 1; j < road.length; j++) {
+        const a = centerOf(road[j - 1]), b = centerOf(road[j]);
+        const pa = screen(a.x, a.y, 0), pb = screen(b.x, b.y, 0);
+        const wet = WET[tiles.get(road[j - 1]).terrain] || WET[tiles.get(road[j]).terrain];
+        ctx.setLineDash(wet ? [3, 4] : []);
+        ctx.strokeStyle = wet ? 'rgba(220,230,240,0.55)' : 'rgba(160,125,80,0.8)';
+        ctx.lineWidth = wet ? 1 : Math.max(2, 4 * pa.f);
+        ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+      }
     }
     ctx.setLineDash([]);
     // Bridges: wooden planks where a road crosses a river.
@@ -456,6 +687,8 @@ export const CARAVAN: Theme = {
       ctx.strokeStyle = 'rgba(70,50,30,0.9)'; ctx.lineWidth = 1;
       ctx.strokeRect(s.x - u * 0.35, s.y - u * 0.12, u * 0.7, u * 0.24);
     }
+
+    drawVolcano(t);
 
     // Cities and houses, far ones first.
     const order = [...nodes.values()].filter(n => owner.has(n.id)).sort((p, q) => p.depth - q.depth);
@@ -538,6 +771,7 @@ export const CARAVAN: Theme = {
       }
     }
 
+    drawClouds(t);
     drawLabels(order, near, fc, inFocus, now, n => (n.kind === 'hub' ? 26 : 12) * n.sf);
   }
 
