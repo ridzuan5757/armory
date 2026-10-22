@@ -625,12 +625,16 @@ const SHARED_B = `
     canvas.style.cursor = hover ? 'grab' : MAP ? 'grab' : 'move';
   });
   // The map moves only until its edge meets the edge of the pane. When the
-  // whole map shows, it stays in the middle.
+  // whole map shows, it stays in the middle. A map that wraps (b.wrap, its
+  // width) has no east or west edge: the view goes on around.
   function movePan(dx, dy) {
     const b = typeof fitBounds === 'function' ? fitBounds() : { x: 0, y: 0, w: 2 * cam.r, h: 2 * cam.r };
     const f = cam.s * view.zoom, cp = Math.cos(view.pitch);
     const rx = Math.max(0, b.w / 2 - (W - 2 * SIDE) / (2 * f)), ry = Math.max(0, (b.h / 2 - (H - TOP - BOTTOM) / (2 * f)) / cp);
-    view.px = Math.max(b.x - rx, Math.min(b.x + rx, cam.x + view.px + dx)) - cam.x;
+    if (b.wrap) {
+      const x = cam.x + view.px + dx;
+      view.px = x - b.wrap * Math.round((x - b.x) / b.wrap) - cam.x;
+    } else view.px = Math.max(b.x - rx, Math.min(b.x + rx, cam.x + view.px + dx)) - cam.x;
     view.py = Math.max(b.y - ry, Math.min(b.y + ry, cam.y + view.py + dy)) - cam.y;
   }
   if (MAP) {
