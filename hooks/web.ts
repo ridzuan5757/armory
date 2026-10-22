@@ -16,8 +16,8 @@ import { RACE } from './themes/race'
 //   NODE_DRAG  a drag on a node moves it (else the drag turns the view)
 //   AUTO_TURN  the view turns slowly at rest
 // A theme can also give MAP_VIEW = { pitch }: then the view stays at that
-// tilt and never turns, a drag or the arrow keys move the map, and a zoom
-// keeps the point under the pointer in place, as in a strategy game.
+// tilt and never turns, a drag, a two-finger scroll or the arrow keys move
+// the map, and a pinch (or + and -) zooms, as in a strategy game.
 export type Theme = { name: string; legend: string; script: string }
 
 export const THEMES: Record<string, Theme> = { mold: MOLD, orbit: ORBIT, hive: HIVE, race: RACE, caravan: CARAVAN }
@@ -585,7 +585,10 @@ const SHARED_B = `
   if (MAP) {
     // Arrow keys and WASD move the map by a fifth of the pane.
     const KEYS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], a: [-1, 0], d: [1, 0], w: [0, -1], s: [0, 1] };
+    // + and - zoom around the middle of the pane, for a mouse with no pinch.
     addEventListener('keydown', ev => {
+      const z = { '+': 1.25, '=': 1.25, '-': 0.8 }[ev.key];
+      if (z) { ev.preventDefault(); touch(); zoomAt(z, W / 2, (H + TOP - BOTTOM) / 2); return; }
       const k = KEYS[ev.key];
       if (!k) return;
       ev.preventDefault();
@@ -595,17 +598,27 @@ const SHARED_B = `
     });
   }
   // A pinch arrives as a wheel event with ctrlKey; a two-finger scroll as a
-  // plain wheel event. Both zoom around the center of the pane; on a map,
-  // around the point under the pointer.
+  // plain wheel event. Both zoom around the center of the pane. On a map, a
+  // two-finger scroll moves the map, and a pinch zooms around the point
+  // under the pointer.
+  function zoomAt(k, px, py) {
+    const old = cam.s * view.zoom;
+    view.zoom = Math.max(MAP ? 0.8 : 0.4, Math.min(MAP ? 8 : 4, view.zoom * k));
+    if (MAP) {
+      const now = cam.s * view.zoom, gap = 1 / old - 1 / now;
+      movePan((px - W / 2) * gap, (py - (H + TOP - BOTTOM) / 2) * gap / Math.cos(view.pitch));
+    }
+  }
   addEventListener('wheel', ev => {
     ev.preventDefault();
     touch();
-    const old = cam.s * view.zoom;
-    view.zoom = Math.max(MAP ? 0.8 : 0.4, Math.min(MAP ? 8 : 4, view.zoom * Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.002))));
-    if (MAP) {
-      const now = cam.s * view.zoom, gap = 1 / old - 1 / now;
-      movePan((ev.clientX - W / 2) * gap, (ev.clientY - (H + TOP - BOTTOM) / 2) * gap / Math.cos(view.pitch));
+    if (MAP && !ev.ctrlKey) {
+      const f = cam.s * view.zoom;
+      view.vpx = view.vpy = 0;
+      movePan(ev.deltaX / f, ev.deltaY / (f * Math.cos(view.pitch)));
+      return;
     }
+    zoomAt(Math.exp(-ev.deltaY * (ev.ctrlKey ? 0.01 : 0.002)), ev.clientX, ev.clientY);
   }, { passive: false });
   canvas.addEventListener('pointerleave', () => { if (!drag && !turn) { hover = undefined; tip.style.display = 'none'; } });
 
