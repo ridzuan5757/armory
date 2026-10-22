@@ -6,7 +6,7 @@ import type { Theme } from '../web'
 
 export const HIVE: Theme = {
   name: 'hive',
-  legend: 'honey = use · bees fly to the files tools use · idle: waggle dance, wandering bees · drag to turn · pinch or scroll to zoom',
+  legend: 'honey = use · bees fly to the files tools use, and swarm there in shades · idle: waggle dance, wandering bees · drag to turn · pinch or scroll to zoom',
   script: `
   // Combs are flat, so the view does not turn at rest: it eases back to
   // face them, and the bees are the motion.
@@ -227,7 +227,7 @@ export const HIVE: Theme = {
   // stubby feet, and a sad face (eyes, blue tears, a frown, pink cheeks).
   // It sits upright, leans a little into its flight, and on a write trip
   // carries a bok choy. Small on screen, it keeps only its eyes.
-  function drawBee(p, prev, t, fade, f, carry) {
+  function drawBee(p, prev, t, fade, f, carry, shades) {
     const R = 5.5 * Math.max(1, f);
     const dx = prev ? p.x - prev.x : 0;
     const lean = Math.max(-0.35, Math.min(0.35, dx * 0.08));
@@ -279,6 +279,22 @@ export const HIVE: Theme = {
       ctx.lineCap = 'round';
       ctx.beginPath(); ctx.arc(0, R * 0.2, R * 0.14, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
     }
+    // Swarm shades: black pixel sunglasses, the "deal with it" meme. They
+    // drop onto the eyes as the bee arrives and lift as it leaves.
+    if (shades > 0) {
+      const u = Math.max(0.6, R * 0.13);
+      const drop = (1 - shades) * R * 2.2;
+      const ox = -5.5 * u, oy = -R * 0.12 - 1.5 * u - drop;
+      const px = (x, y, w = 1) => ctx.fillRect(ox + x * u, oy + y * u, w * u + 0.3, u + 0.3);
+      ctx.globalAlpha = fade * shades;
+      ctx.fillStyle = '#111111';
+      px(0, 0, 11);
+      px(0, 1, 5); px(6, 1, 5);
+      px(1, 2, 3); px(7, 2, 3);
+      ctx.fillStyle = '#ffffff';
+      px(1, 1); px(7, 1);
+      ctx.globalAlpha = fade;
+    }
     // The bok choy, held in front.
     if (carry) {
       ctx.fillStyle = '#eef3e6';
@@ -289,6 +305,35 @@ export const HIVE: Theme = {
     ctx.restore();
     ctx.globalAlpha = 1;
   }
+
+  // The swarm: while a file cell glows from a tool use, every resident bee
+  // (the queen bees, the job workers, the wanderers) flies to that cell,
+  // circles it and puts on shades. When the glow fades, they fly home.
+  const swarm = { w: 0, target: undefined };
+  function swarmUpdate(order) {
+    let hot, best = 0;
+    for (const n of order) {
+      if (n.type !== 'file' || !n.data || n.data.kind !== 'file' || n.dying) continue;
+      const h = heatOf(n);
+      if (h > best) { best = h; hot = n; }
+    }
+    if (hot && best > 0.15 && !calm) {
+      swarm.target = hot.id;
+      swarm.w = Math.min(1, swarm.w + 0.03);
+    } else {
+      swarm.w = Math.max(0, swarm.w - 0.02);
+    }
+    return swarm.w > 0 ? nodes.get(swarm.target) : undefined;
+  }
+  // Where bee i of the crowd goes: a slot on a slow ring around the target.
+  function swarmAt(home, i, target, t) {
+    if (!target) return home;
+    const a = i * 2.39996 + t * 0.6, r = HEX * (0.75 + 0.3 * (i % 3));
+    const k = swarm.w * swarm.w * (3 - 2 * swarm.w);
+    const x = target.x + Math.cos(a) * r, y = target.y + Math.sin(a) * r * 0.8, z = target.z + 6 + 2 * Math.sin(t * 3 + i);
+    return { x: home.x + (x - home.x) * k, y: home.y + (y - home.y) * k, z: home.z + (z - home.z) * k };
+  }
+  const shadesOf = () => Math.max(0, Math.min(1, (swarm.w - 0.6) / 0.4));
 
   function draw(now) {
     const t = now / 1000;
@@ -391,22 +436,25 @@ export const HIVE: Theme = {
     ctx.setLineDash([]);
     ctx.lineWidth = 1;
 
-    // Bees on trips, with a short trail.
+    // Bees on trips, with a short trail. Wanderers join a swarm.
+    const crowd = swarmUpdate(order);
+    let slot = 0;
     for (const b of bees) {
-      const p = beePos(b, now);
+      let p = beePos(b, now);
       if (!p) continue;
-      if (b.kind === 'wander' && hum <= 0) continue;
+      if (b.kind === 'wander' && hum <= 0 && !crowd) continue;
+      if (b.kind === 'wander') p = { ...swarmAt(p, slot++, crowd, t), phase: p.phase };
       const s = screen(p.x, p.y, p.z);
       b.tail.push({ x: s.x, y: s.y });
       if (b.tail.length > 6) b.tail.shift();
       const target = nodes.get(b.target);
-      const fade = (b.kind === 'wander' ? hum : 1) * (target && !inFocus(target) ? 0.35 : 1) * s.fog;
+      const fade = (b.kind === 'wander' ? Math.max(hum, swarm.w) : 1) * (target && !inFocus(target) ? 0.35 : 1) * s.fog;
       for (let i = 1; i < b.tail.length; i++) {
         ctx.strokeStyle = rgba('#f5b94a', 0.25 * (i / b.tail.length) * fade);
         ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(b.tail[i - 1].x, b.tail[i - 1].y); ctx.lineTo(b.tail[i].x, b.tail[i].y); ctx.stroke();
       }
-      drawBee({ x: s.x, y: s.y }, b.tail[b.tail.length - 2], t + b.seed, fade, s.f, b.op === 'write' && p.phase !== 'back');
+      drawBee({ x: s.x, y: s.y }, b.tail[b.tail.length - 2], t + b.seed, fade, s.f, b.op === 'write' && p.phase !== 'back', shadesOf());
     }
 
     // Bees at work on each running job: three that circle close over it.
@@ -414,23 +462,29 @@ export const HIVE: Theme = {
       if (!n.live || n.dying) continue;
       for (let i = 0; i < 3; i++) {
         const a = t * (1.8 + 0.4 * i) + i * 2.1 + n.phase;
-        const s = screen(n.x + Math.cos(a) * HEX * 0.8, n.y + Math.sin(a * 1.3) * HEX * 0.6, n.z + 5);
-        drawBee({ x: s.x, y: s.y }, { x: s.x - Math.sin(a), y: s.y + Math.cos(a) }, t + i, (inFocus(n) ? 1 : 0.35) * s.fog, s.f);
+        const home = { x: n.x + Math.cos(a) * HEX * 0.8, y: n.y + Math.sin(a * 1.3) * HEX * 0.6, z: n.z + 5 };
+        const q = swarmAt(home, slot++, crowd, t);
+        const s = screen(q.x, q.y, q.z);
+        const seen = crowd && swarm.w > 0.5 ? crowd : n;
+        drawBee({ x: s.x, y: s.y }, { x: s.x - Math.sin(a), y: s.y + Math.cos(a) }, t + i, (inFocus(seen) ? 1 : 0.35) * s.fog, s.f, false, shadesOf());
       }
     }
 
     // At rest, one bee dances a waggle figure-8 beside each queen cell: the
-    // straight run shakes side to side, then it loops back.
-    if (hum > 0 && !calm) for (const n of order) {
+    // straight run shakes side to side, then it loops back. In a swarm the
+    // queen bees fly to the crowd too, so it is never small.
+    if ((hum > 0 || crowd) && !calm) for (const n of order) {
       if (n.kind !== 'hub') continue;
       const u = t * 1.4 + n.phase;
       const run = Math.cos(u) > 0.3;
       const wag = run ? Math.sin(t * 40) * 1.6 : 0;
       const x = n.x + HEX * 1.9 + Math.sin(u) * HEX * 0.9 + wag;
       const y = n.y + Math.sin(u) * Math.cos(u) * HEX * 0.9;
-      const s = screen(x, y, n.z + 5);
-      const back = screen(x - Math.cos(u) * 2, y - Math.cos(2 * u) * 2, n.z + 5);
-      drawBee({ x: s.x, y: s.y }, { x: back.x, y: back.y }, t, hum * (inFocus(n) ? 1 : 0.35) * s.fog, s.f);
+      const q = swarmAt({ x, y, z: n.z + 5 }, slot++, crowd, t);
+      const s = screen(q.x, q.y, q.z);
+      const back = screen(q.x - Math.cos(u) * 2, q.y - Math.cos(2 * u) * 2, q.z);
+      const seen = crowd && swarm.w > 0.5 ? crowd : n;
+      drawBee({ x: s.x, y: s.y }, { x: back.x, y: back.y }, t, Math.max(hum, swarm.w) * (inFocus(seen) ? 1 : 0.35) * s.fog, s.f, false, shadesOf());
     }
 
     // Labels keep one screen size, with a halo of the background. A small
