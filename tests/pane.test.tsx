@@ -233,6 +233,11 @@ test('/armory theme saves the theme and rewrites the page for it', async ($, on)
   expect(await run('theme orbit')).toBe('Armory theme: orbit.')
   expect(writes.get('index.html')).toContain("const THEME = 'orbit'")
   expect(writes.get('data.js')).toContain('"theme":"orbit"')
+  // The data carries the build of the page on disk, so the open page reloads
+  // only to that page, never in a loop.
+  const build = /"build":"([a-z0-9]+)"/.exec(writes.get('data.js') ?? '')?.[1]
+  expect(build).toBeDefined()
+  expect(writes.get('index.html')).toContain(`BUILD = '${build}'`)
   // The store keeps it: the plain command reads it back.
   expect(await run('theme')).toMatch(/Theme: orbit\./)
 })
