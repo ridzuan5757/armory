@@ -109,6 +109,8 @@ const HEAD = `<!doctype html>
   <span><i style="background:#f0643c"></i>git</span>
   <span><i style="background:#3fd0b0"></i>mcp</span>
   <span><i style="background:#9ad86a"></i>usage</span>
+  <span><i style="background:#ff8fa3"></i>plugins</span>
+  <span><i style="background:#ffd27a"></i>schedule</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -117,7 +119,7 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0', usage: '#9ad86a' };
+  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0', usage: '#9ad86a', plugins: '#ff8fa3', schedule: '#ffd27a' };
   // A fill from 0 to 100 %: green, then amber from 50, red from 80.
   const fillColor = p => p >= 80 ? '#ff6b6b' : p >= 50 ? '#f5b94a' : '#7fd8a6';
   const MCP_STATUS = { connected: '#3fd0b0', auth: '#f5b94a', off: '#ff6b6b' };
@@ -456,6 +458,38 @@ const SHARED_A = `
       edge('ctx:' + c.pid, 'session:' + c.pid, { w: 0.8, rest: 160, k: 0.004, link: true, rel: 'same', solid: true, color: HUB.usage }, step * 900);
     }
 
+    // The PLUGINS colony: one leaf per installed plugin; one updated in the
+    // last hour pulses, and Armory itself is larger.
+    const plugins = s.plugins || [];
+    node('hub:plugins', { kind: 'hub', label: 'PLUGINS ' + plugins.length, color: HUB.plugins, r: 9 }, '', 0);
+    edge('hub:plugins', 'hub:usage', { w: 2, rest: 400, k: 0 }, 0);
+    edge('hub:plugins', 'hub:skills', { w: 2, rest: 400, k: 0 }, 0);
+    branch('hub:plugins', HUB.plugins, plugins.map(p => ({
+      id: 'plugin:' + p.name + '@' + p.marketplace, w: p.self ? 2 : 1.2, rest: 30,
+      props: { type: 'plugin', data: p, label: p.name + ' ' + p.version, color: HUB.plugins, r: p.self ? 5 : 3.5,
+        live: Date.now() - p.updated < 3600000, showLabel: true },
+    })), 150, step);
+
+    // The SCHEDULE colony: this session's scheduled wakeups and background
+    // work, as the end of the last turn reported them; running work pulses.
+    const plan = s.schedule || { crons: [], tasks: [], at: 0 };
+    const running = plan.tasks.filter(t => t.status === 'running' || t.status === 'pending').length;
+    node('hub:schedule', { kind: 'hub', label: 'SCHEDULE ' + plan.crons.length + '\u23f0 ' + running + '\u25b6', color: HUB.schedule, r: 9 }, '', 0);
+    edge('hub:schedule', 'hub:jobs', { w: 2.4, rest: 400, k: 0 }, 0);
+    edge('hub:schedule', 'hub:plugins', { w: 2, rest: 400, k: 0 }, 0);
+    branch('hub:schedule', HUB.schedule, [
+      ...plan.crons.map(c => ({
+        id: 'cron:' + c.id, w: 1.4, rest: 34,
+        props: { type: 'cron', data: c, label: c.schedule + ' \u00b7 ' + c.prompt.slice(0, 40), color: HUB.schedule, r: 4, live: c.recurring, showLabel: true },
+      })),
+      ...plan.tasks.map(t => {
+        const live = t.status === 'running' || t.status === 'pending';
+        return { id: 'task:' + t.id, w: live ? 2 : 1, rest: 30,
+          props: { type: 'task', data: t, label: t.type + ' \u00b7 ' + t.description.slice(0, 40), color: live ? '#f5b94a' : '#8b927c',
+            r: live ? 4.5 : 3, live, dim: !live, showLabel: live } };
+      }),
+    ], 150, step);
+
     // One node per running session; a busy one pulses.
     branch('hub:sessions', HUB.sessions, sessions.map(x => ({
       id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
@@ -600,6 +634,16 @@ const SHARED_B = `
   function describe(n) {
     const d = n.data;
     if (n.kind === 'hub') return '<div class="k">hub</div><div class="n">' + esc(n.label) + '</div>';
+    if (n.type === 'plugin') {
+      return '<div class="k">plugin \u00b7 ' + esc(d.scope) + ' \u00b7 ' + esc(d.marketplace) + '</div><div class="n">' + esc(d.name) + ' ' + esc(d.version) + '</div>' +
+        (d.updated ? '<div class="d">updated ' + esc(new Date(d.updated).toLocaleString()) + '</div>' : '');
+    }
+    if (n.type === 'cron') {
+      return '<div class="k">' + (d.recurring ? 'recurring' : 'one-time') + ' wakeup \u00b7 ' + esc(d.schedule) + '</div><div class="n">' + esc(d.prompt) + '</div>';
+    }
+    if (n.type === 'task') {
+      return '<div class="k">' + esc(d.type) + ' \u00b7 ' + esc(d.status) + '</div><div class="n">' + esc(d.description) + '</div>';
+    }
     if (n.type === 'limit') {
       const at = d.resetsAt ? new Date(d.resetsAt) : undefined;
       return '<div class="k">rate limit</div><div class="n">' + esc(n.label) + '</div>' +

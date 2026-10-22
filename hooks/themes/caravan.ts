@@ -17,7 +17,7 @@ export const CARAVAN: Theme = {
   legend: '',
   script: HORSE_KIT + `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0.6 };
-  const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:memory', 'hub:sessions', 'hub:usage'];
+  const CITIES = ['hub:skills', 'hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:memory', 'hub:sessions', 'hub:usage', 'hub:plugins', 'hub:schedule'];
   function anchor(id) {
     const c = owner.get(id);
     return c ? tileCenter(c.q, c.r) : { x: 0, y: 0, z: 0 };
@@ -471,10 +471,12 @@ export const CARAVAN: Theme = {
       score.set(k, s + 0.15 * room + 0.01 * hash(k));
     }
     const ranked = [...score.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
-    // GIT works on the same files as FILES, so its city takes the site
-    // nearest the FILES city (with room for territories between the cities).
-    const near = bySize.includes('hub:git') && bySize.includes('hub:files');
-    const rest = near ? bySize.filter(c => c !== 'hub:git') : bySize;
+    // A colony that works on another's things settles near it: GIT near
+    // FILES (the same files), USAGE near SESSIONS (their contexts). Its city
+    // takes the site nearest its partner, with room for territories between.
+    const NEAR = { 'hub:git': 'hub:files', 'hub:usage': 'hub:sessions' };
+    const followers = bySize.filter(c => NEAR[c] && bySize.includes(NEAR[c]));
+    const rest = bySize.filter(c => !followers.includes(c));
     let sites = [], gap = Math.round(70 / DEG);
     for (; gap >= 2 && sites.length < rest.length; gap--) {
       sites = [];
@@ -491,19 +493,20 @@ export const CARAVAN: Theme = {
       owner.set(city, { q, r, city });
       held.set(k, city);
     });
-    if (near) {
-      const f = owner.get('hub:files'), room = Math.max(6, Math.round(gap * 0.6));
+    const room = Math.max(6, Math.round(gap * 0.6));
+    for (const city of followers) {
+      const f = owner.get(NEAR[city]), taken = [...held.keys()];
       let best, bd = Infinity;
       for (const k of ranked.slice(0, 600)) {
         const c = unkey(k);
-        if (sites.some(s => tdist(unkey(s), c) < room)) continue;
+        if (taken.some(s => tdist(unkey(s), c) < room)) continue;
         const d = tdist(c, [f.q, f.r]) - 0.05 * (score.get(k) || 0);
         if (d < bd) { bd = d; best = k; }
       }
       const k = best || ranked.find(x => !held.has(x));
       const [q, r] = unkey(k);
-      owner.set('hub:git', { q, r, city: 'hub:git' });
-      held.set(k, 'hub:git');
+      owner.set(city, { q, r, city });
+      held.set(k, city);
     }
     cityCost = new Map(bySize.map(city => [city, costsFrom(tkey(owner.get(city).q, owner.get(city).r))]));
 

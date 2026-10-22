@@ -11,7 +11,7 @@ export const ORBIT: Theme = {
 
   // Hubs are stars on a pentagon in the z = 0 plane, spaced so that their
   // systems never touch.
-  const ANGLE = { 'hub:skills': -90, 'hub:files': -45, 'hub:git': 0, 'hub:mcp': 45, 'hub:jobs': 90, 'hub:memory': 135, 'hub:sessions': 180, 'hub:usage': 225 };
+  const ANGLE = { 'hub:skills': -90, 'hub:files': -54, 'hub:git': -18, 'hub:mcp': 18, 'hub:schedule': 54, 'hub:jobs': 90, 'hub:memory': 126, 'hub:sessions': 162, 'hub:usage': 198, 'hub:plugins': 234 };
   let spread = 280;
   // During idle the pentagon of stars turns slowly about its center (spin).
   let spin = 0;
