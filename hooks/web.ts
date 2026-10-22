@@ -111,6 +111,7 @@ const HEAD = `<!doctype html>
   <span><i style="background:#9ad86a"></i>usage</span>
   <span><i style="background:#ff8fa3"></i>plugins</span>
   <span><i style="background:#ffd27a"></i>schedule</span>
+  <span><i style="background:#7fb2ff"></i>machine</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -119,7 +120,7 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0', usage: '#9ad86a', plugins: '#ff8fa3', schedule: '#ffd27a' };
+  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0', usage: '#9ad86a', plugins: '#ff8fa3', schedule: '#ffd27a', machine: '#7fb2ff' };
   // A fill from 0 to 100 %: green, then amber from 50, red from 80.
   const fillColor = p => p >= 80 ? '#ff6b6b' : p >= 50 ? '#f5b94a' : '#7fd8a6';
   const MCP_STATUS = { connected: '#3fd0b0', auth: '#f5b94a', off: '#ff6b6b' };
@@ -313,10 +314,13 @@ const SHARED_A = `
       lastFileAt = newest.at;
       if (!target) { target = 'file:' + newest.path; why = 'files · ' + newest.path.slice(newest.path.lastIndexOf('/') + 1) + ' ' + newest.op; }
     }
-    const grown = fresh.find(n => n.kind !== 'joint' && n.kind !== 'hub');
+    // Machine units and processes change every few seconds: they never take
+    // the camera.
+    const quiet = n => n.type === 'unit' || n.type === 'proc' || (n.colony === 'hub:machine' && n.kind !== 'hub');
+    const grown = fresh.find(n => n.kind !== 'joint' && n.kind !== 'hub' && !quiet(n));
     if (!target && grown) { target = grown.id; why = 'grew · ' + grown.label; }
     if (!target) {
-      const gone = [...nodes.values()].find(n => n.dying === now && n.kind === 'leaf');
+      const gone = [...nodes.values()].find(n => n.dying === now && n.kind === 'leaf' && !quiet(n));
       const up = gone && [...edges.values()].find(e => e.b === gone.id && !e.link);
       if (up) { target = up.a; why = 'removed · ' + gone.label; }
     }
@@ -490,6 +494,32 @@ const SHARED_A = `
       }),
     ], 150, step);
 
+    // The MACHINE colony: CPU, memory and disk, each a group with one unit
+    // per 5 % of use (up to 20), so the area of the colony grows and shrinks
+    // with the load; the top processes by CPU hang under CPU.
+    const m = s.machine;
+    if (m && m.memory.total) {
+      const gb = b => (b / 1073741824).toFixed(1) + ' GB';
+      const memP = Math.round(100 * m.memory.used / m.memory.total), diskP = m.disk.total ? Math.round(100 * m.disk.used / m.disk.total) : 0;
+      node('hub:machine', { kind: 'hub', label: 'MACHINE CPU ' + m.cpu + '% \u00b7 MEM ' + memP + '%', color: HUB.machine, r: 9 }, '', 0);
+      edge('hub:machine', 'hub:usage', { w: 2, rest: 400, k: 0 }, 0);
+      edge('hub:machine', 'hub:sessions', { w: 2, rest: 400, k: 0 }, 0);
+      [['cpu', 'CPU', m.cpu, m.cores + ' cores'], ['mem', 'Memory', memP, gb(m.memory.used) + ' of ' + gb(m.memory.total)],
+        ['disk', 'Disk', diskP, gb(m.disk.used) + ' of ' + gb(m.disk.total)]].forEach(([key, name, p, detail], i) => {
+        const id = 'res:' + key;
+        node(id, { kind: 'group', type: 'resource', data: { name, percent: p, detail }, label: name + ' ' + p + '%', color: fillColor(p), r: 5.5,
+          live: p >= 80 }, 'hub:machine', step * (250 + i * 60));
+        edge('hub:machine', id, { w: 1 + 2.4 * p / 100, rest: 60, k: 0.08 }, step * (100 + i * 60));
+        const units = Math.min(20, Math.round(p / 5));
+        branch(id, fillColor(p), [
+          ...Array.from({ length: units }, (_, u) => ({ id: id + '/u' + u, w: 0.6, rest: 16,
+            props: { type: 'unit', data: { name, percent: p, detail }, label: '', color: fillColor(p), r: 1.8, showLabel: false } })),
+          ...(key === 'cpu' ? m.top.map(t => ({ id: 'proc:' + t.name, w: 0.8 + Math.min(2, t.cpu / 50), rest: 26,
+            props: { type: 'proc', data: t, label: t.name + ' ' + t.cpu + '%', color: '#7fb2ff', r: 2.4 + Math.min(4, t.cpu / 25), showLabel: true } })) : []),
+        ], 450 + i * 60, step);
+      });
+    }
+
     // One node per running session; a busy one pulses.
     branch('hub:sessions', HUB.sessions, sessions.map(x => ({
       id: 'session:' + x.pid, w: x.status === 'busy' ? 2.4 : 1.2, rest: 40,
@@ -634,6 +664,12 @@ const SHARED_B = `
   function describe(n) {
     const d = n.data;
     if (n.kind === 'hub') return '<div class="k">hub</div><div class="n">' + esc(n.label) + '</div>';
+    if (n.type === 'resource' || n.type === 'unit') {
+      return '<div class="k">machine</div><div class="n">' + esc(d.name) + ' ' + d.percent + ' %</div><div class="d">' + esc(d.detail) + '</div>';
+    }
+    if (n.type === 'proc') {
+      return '<div class="k">process</div><div class="n">' + esc(d.name) + '</div><div class="d">' + d.cpu + ' % of one core \u00b7 ' + (d.mem / 1048576).toFixed(0) + ' MB</div>';
+    }
     if (n.type === 'plugin') {
       return '<div class="k">plugin \u00b7 ' + esc(d.scope) + ' \u00b7 ' + esc(d.marketplace) + '</div><div class="n">' + esc(d.name) + ' ' + esc(d.version) + '</div>' +
         (d.updated ? '<div class="d">updated ' + esc(new Date(d.updated).toLocaleString()) + '</div>' : '');

@@ -49,6 +49,10 @@ Armory has four themes:
 - **Schedule**: this session's scheduled wakeups (cron tasks, `/loop`,
   `ScheduleWakeup`) and background work (subagents, workflows, shell tasks,
   monitors), as the end of each turn reports them; running work pulses.
+- **Machine**: the CPU, memory and disk of this Mac, every 5 s. Each one
+  has one small tile per 5 % of use, so the colony grows and shrinks with
+  the load; the five processes that use the most CPU hang under CPU (name
+  only). These changes never move the camera.
 - **Files**: the folder where the session started. When Read, Edit, Write or
   NotebookEdit uses a file, its path opens and the file glows: cyan for a
   read, orange for a write, green for a new file. New files grow in, and
@@ -110,6 +114,8 @@ your usual browser.
 
 Armory runs on your computer only. It sends nothing over the network.
 
+- It runs `ps`, `vm_stat`, `sysctl` and `df` every 5 s for the MACHINE
+  colony (process names only, never their arguments).
 - It reads the last usage block (token counts and model name only) from the
   end of each running session's transcript.
 - It reads the MCP server names, types and scopes from `~/.claude.json` and
