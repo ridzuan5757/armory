@@ -104,6 +104,8 @@ async function loadJobs($: EngineInterface, home: string, errors: string[]): Pro
 
 async function loadMemory($: EngineInterface, home: string, cwd: string, errors: string[]): Promise<MemoryRow[]> {
   const dir = `${home}/.claude/projects/${cwd.replace(/[^A-Za-z0-9]/g, '-')}/memory`
+  // A project with no memory yet has no MEMORY.md: an empty colony, not an error.
+  if (!(await $.fs.exists(`${dir}/MEMORY.md`).catch(() => false))) return []
   let index: string
   try {
     index = await $.fs.read(`${dir}/MEMORY.md`)
@@ -274,6 +276,20 @@ async function touch($: EngineInterface, path: string, op: FileOp) {
   const files = await loadFiles($, home, cwd)
   const next = await update($, snapshot, s => ({ ...s, files }))
   if (web.isOn) await writeData($, next, 1000)
+}
+
+// The folder the session started in, from its file in ~/.claude/sessions.
+// The engine reports the current folder, which a cd moves; memory and the
+// FILES colony belong to the start folder.
+async function startDir($: EngineInterface, home: string, fallback: string) {
+  const pid = await claudePidOf($)
+  const text = await $.fs.read(`${home}/.claude/sessions/${pid}.json`).catch(() => '')
+  try {
+    const cwd = (JSON.parse(text) as { cwd?: unknown }).cwd
+    return typeof cwd === 'string' && cwd.startsWith('/') ? cwd : fallback
+  } catch {
+    return fallback
+  }
 }
 
 async function refresh($: EngineInterface) {
@@ -530,7 +546,9 @@ async function stress($: EngineInterface, args: string) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await update($, cwdAtom, () => e.cwd)
+    const home = (await $.env.get('HOME').catch(() => undefined)) ?? ''
+    const cwd = await startDir($, home, e.cwd).catch(() => e.cwd)
+    await update($, cwdAtom, () => cwd)
     await $.command.register({
       name: 'armory',
       description: 'Open the Armory pane (skills, jobs, memory)',
@@ -545,7 +563,7 @@ export const register: Register = on => {
         await refresh($)
         const page = await openWeb($, false).catch(() => undefined)
         if (!page) await $.ui.open({ id: PANE, title: TITLE })
-      })()
+      })().catch(() => undefined)
     } else {
       void refresh($)
     }
