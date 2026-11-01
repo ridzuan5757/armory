@@ -169,6 +169,10 @@ const SHARED_A = `
   const FOCUS_MS = 6000, HANDS_OFF_MS = 8000, MAP_HOLD_MS = 30000, SLEEP_MS = 30000;
   const cam = { x: 0, y: 0, z: 0, s: 1, r: 300 };
 
+  // The MACHINE colony changes at almost each check (units follow the load,
+  // the top processes change), so its nodes come and go in place and do not
+  // heat the layout again: a hot layout keeps the page at 30 frames a second.
+  const machinePart = n => !!n && n.colony === 'hub:machine' && n.id !== 'hub:machine';
   function node(id, props, parent, delay) {
     let n = nodes.get(id);
     if (!n) {
@@ -179,7 +183,7 @@ const SHARED_A = `
         vx: 0, vy: 0, vz: 0,
         phase: hash(id + '~') * 6.2832, born: performance.now() + delay, colony: p ? p.colony || p.id : id };
       nodes.set(id, n);
-      alpha = Math.max(alpha, 0.8);
+      if (!machinePart(n)) alpha = Math.max(alpha, 0.8);
       if (!firstLoad) fresh.push(n);
     }
     Object.assign(n, props);
@@ -193,7 +197,7 @@ const SHARED_A = `
     if (!e) {
       e = { key, a, b, bend: (hash(key) - 0.5) * 0.7, born: performance.now() + delay };
       edges.set(key, e);
-      alpha = Math.max(alpha, 0.8);
+      if (!machinePart(nodes.get(a)) && !machinePart(nodes.get(b))) alpha = Math.max(alpha, 0.8);
     }
     Object.assign(e, props);
     e.seen = gen;
@@ -592,7 +596,7 @@ const SHARED_A = `
 
     // Gone nodes and edges shrink out before they are removed (see purge).
     const now = performance.now();
-    for (const n of nodes.values()) if (n.seen !== gen && !n.dying) { n.dying = now; alpha = Math.max(alpha, 0.3); }
+    for (const n of nodes.values()) if (n.seen !== gen && !n.dying) { n.dying = now; if (!machinePart(n)) alpha = Math.max(alpha, 0.3); }
     for (const e of edges.values()) if (e.seen !== gen && !e.dying) e.dying = now;
     if (!firstLoad) noticeEvents(s, now);
     else {
@@ -883,29 +887,35 @@ const SHARED_B = `
   function frame(now) {
     requestAnimationFrame(frame);
     const spin = Math.abs(view.vyaw) + Math.abs(view.vpitch) > 0.0005;
-    // After 4 s with no input, the network turns slowly (a map stays); the
-    // speed eases in.
-    // It stops while the pointer is on a node, so the tooltip stays put.
-    const idle = !calm && !drag && !turn && !spin && !hover && now - view.idle > 4000;
-    view.auto = idle ? Math.min(1, view.auto + 0.02) : 0;
     // Every drawn frame goes through the browser, terminal-browser, the
     // terminal and the window server, so frames cost far more than drawing.
-    // A map has no layout to settle and no turn at rest: only input, a
-    // glide, a focus and fresh data make it busy; at rest it draws 10 frames
-    // a second. A hidden page draws none. After SLEEP_MS with no input and
-    // no event (and nothing the theme keeps awake, MAP_AWAKE), a map sleeps:
-    // one frame a second, and one at each new data.
+    // Only input, a glide, a focus, a layout that settles and fresh data
+    // (a change other than the machine values) make the page busy: 30 frames
+    // a second. The slow turn at rest is not busy: 15 frames a second, and
+    // 10 on a map. A hidden page draws none. After SLEEP_MS with no input
+    // and no event (and nothing the theme keeps awake, MAP_AWAKE), the page
+    // sleeps: the turn stops, one frame a second, and one at each new data.
     if (document.hidden) return;
-    const busy = (!MAP && (alpha > 0.004 || view.auto > 0 || now - lastData < 1500)) || drag || turn || spin ||
+    const busy = (!MAP && (alpha > 0.004 || now - lastData < 1500)) || drag || turn || spin ||
       Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || focus;
-    const asleep = MAP && !busy && now - view.idle > SLEEP_MS && now - lastEvent > SLEEP_MS && !(typeof MAP_AWAKE === 'function' && MAP_AWAKE());
-    const wait = busy ? 33 : calm ? 1000 : asleep ? (lastData > last ? 0 : 1000) : MAP ? 100 : 66;
+    const asleep = !busy && now - view.idle > SLEEP_MS && now - lastEvent > SLEEP_MS && !(typeof MAP_AWAKE === 'function' && MAP_AWAKE());
+    // After 4 s with no input, the network turns slowly (a map stays); the
+    // speed eases in.
+    // It stops while the pointer is on a node, so the tooltip stays put, and
+    // it stops when the page sleeps.
+    const idle = !calm && !asleep && !drag && !turn && !spin && !hover && now - view.idle > 4000;
+    if (!idle) view.auto = 0;
+    const wait = busy ? 33 : calm ? 1000 : asleep ? (dataAt > last ? 0 : 1000) : MAP ? 100 : 66;
     if (now - last < wait) return;
+    // The turn and the zoom move by the time since the last frame, not by
+    // the frame, so a lower frame rate does not make them slower.
+    const step = Math.min(4, (now - last) / 33);
     last = now;
+    if (idle) view.auto = Math.min(1, view.auto + 0.02 * step);
     if (view.auto > 0 && !MAP) {
-      if (AUTO_TURN) view.yaw += 0.0035 * view.auto;
+      if (AUTO_TURN) view.yaw += 0.0035 * view.auto * step;
       // The zoom goes slowly back to the size that fits the pane.
-      view.zoom += (1 - view.zoom) * 0.012 * view.auto;
+      view.zoom += (1 - view.zoom) * Math.min(1, 0.012 * view.auto * step);
     }
     if (MAP) {
       // A map keeps its tilt. After a drag it glides a little; at rest, or
@@ -937,7 +947,9 @@ const SHARED_B = `
     }
   }
 
-  let pollMs = 1000, lastSeq = -1, frames = 0, windowStart = performance.now(), lastData = 0;
+  // dataAt: the last new data. lastData: the last new data with a change
+  // other than the machine values, which change at almost each check.
+  let pollMs = 1000, lastSeq = -1, frames = 0, windowStart = performance.now(), lastData = 0, dataAt = 0, lastKey = '';
   window.armoryData = d => {
     // A theme change or a plugin update rewrites index.html; the old page
     // reloads to show it.
@@ -956,7 +968,10 @@ const SHARED_B = `
       (s.files || []).filter(f => f.at > 0).length + '</b> files · <b>' + (s.sessions || []).length + '</b> sessions';
     document.getElementById('errors').textContent = s.errors.join(' · ');
     build(s);
-    lastData = performance.now();
+    dataAt = performance.now();
+    const { machine, loadedAt, ...rest } = s;
+    const key = JSON.stringify(rest);
+    if (key !== lastKey) { lastKey = key; lastData = dataAt; }
   };
 
   function poll() {
