@@ -160,6 +160,14 @@ export const COCKPIT: Theme = {
       .sort((a, b) => a.at - b.at).slice(-10);
     const want = new Map();
     for (let i = 1; i < hot.length; i++) want.set(hot[i - 1].id + '|' + hot[i].id, [hot[i - 1], hot[i]]);
+    // A used file that also has a git change (the data links the two by
+    // their path) links up with that change too: a sector from FILES to GIT.
+    const hotIds = new Set(hot.map(n => n.id));
+    for (const e of edges.values()) {
+      if (!e.link || e.dying || e.rel !== 'same' || !e.a.startsWith('change:') || !hotIds.has(e.b)) continue;
+      const file = nodes.get(e.b), change = nodes.get(e.a);
+      if (file && change && places.has(change.id)) want.set(file.id + '|' + change.id, [change, file]);
+    }
     for (const [key, [a, b]] of want) {
       let l = links.get(key);
       if (!l) {
@@ -302,15 +310,20 @@ export const COCKPIT: Theme = {
       const sweep = ((tb - ta + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
       const back = sweep < 0;
       ctx.fillStyle = rgba(l.color, 0.14);
-      // A line from each item down to the outer arc, so the source shows.
-      // While the area closes up, the lines follow the outer arc down, so
-      // they still meet at the center when the area is gone.
-      ctx.beginPath();
-      for (const [t, r] of [[ta, ra], [tb, rb]]) if (r > ro) {
-        ctx.moveTo(cx + Math.cos(t) * r, cy + Math.sin(t) * r);
-        ctx.lineTo(cx + Math.cos(t) * ro, cy + Math.sin(t) * ro);
+      // While the outer arc moves, a line runs from each item down to it, so
+      // the lines from the center turn into the sector without a jump. The
+      // lines fade out as the outer arc reaches its lane: at rest a sector
+      // shows only its own shape.
+      if (l.c < 1) {
+        ctx.strokeStyle = rgba(l.color, 0.75 * (1 - ease(l.c)));
+        ctx.beginPath();
+        for (const [t, r] of [[ta, ra], [tb, rb]]) if (r > ro) {
+          ctx.moveTo(cx + Math.cos(t) * r, cy + Math.sin(t) * r);
+          ctx.lineTo(cx + Math.cos(t) * ro, cy + Math.sin(t) * ro);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = rgba(l.color, 0.75);
       }
-      ctx.stroke();
       ctx.beginPath();
       ctx.arc(cx, cy, ro, ta, ta + sweep, back);
       ctx.arc(cx, cy, ri, ta + sweep, ta, !back);
