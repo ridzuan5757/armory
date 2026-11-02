@@ -133,7 +133,7 @@ export const COCKPIT: Theme = {
     status: ['ACCOUNT', 'MODEL', 'STATE'], statusline: ['FOOTER', 'DISPLAY', 'SETUP'],
     theme: ['COLORS', 'STYLE', 'DISPLAY'], usage: ['LIMITS', 'QUOTA', 'PLAN'],
   };
-  const TA_MS = 8000, TA_IN = 600, TA_OUT = 1500, TA_COLOR = '#e43565', CYAN = '#7fd8ff';
+  const TA_MS = 8000, TA_IN = 600, TA_OUT = 1500, TA_COLOR = '#e43565', CYAN = '#7fd8ff', MARK = '#c8ccd4';
   // The other colors of the Marut mode panel of Gundam Harute.
   const TA_FILL = '#7a2f5f', TA_LIGHT = '#f3b8d7', TA_SHADOW = '#4a193b', TA_TERMS = '#d63a72';
   let ta, lastCommandAt;
@@ -457,11 +457,21 @@ export const COCKPIT: Theme = {
       ctx.lineWidth = Math.max(3, Rp * 0.022);
       ctx.strokeStyle = rgba(p.color, 0.55);
       ctx.beginPath(); ctx.arc(cx, cy, r, lo + gap, hi - gap); ctx.stroke();
-      // End marks: a short cross line at each end of the band, as on a gauge.
+    }
+    // Boundary marks: one short cross line in the middle of the gap between
+    // two neighbor bands, as on a gauge. Two bands share one mark, so short
+    // bands do not make a cluster of marks. The marks are a neutral grey,
+    // a color that no hub uses (see HUB in web.ts).
+    const live = [...sectors].filter(([id]) => { const p = nodes.get(id); return p && !p.dying; })
+      .map(([, sc]) => sc).sort((u, v) => u.sfrom - v.sfrom);
+    if (live.length > 1) {
       ctx.lineWidth = 1.2;
-      ctx.strokeStyle = rgba(p.color, 0.8);
+      ctx.strokeStyle = rgba(mixHex(MARK, TA_COLOR, tk), 0.7);
       ctx.beginPath();
-      for (const e of [lo, hi]) {
+      for (let i = 0; i < live.length; i++) {
+        const prev = live[(i + live.length - 1) % live.length], next = live[i];
+        const end = i === 0 ? prev.sto - TAU : prev.sto;
+        const e = (end + next.sfrom) / 2 + spin;
         ctx.moveTo(cx + Math.cos(e) * Rp, cy + Math.sin(e) * Rp);
         ctx.lineTo(cx + Math.cos(e) * Rp * 1.08, cy + Math.sin(e) * Rp * 1.08);
       }
