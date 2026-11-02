@@ -234,6 +234,39 @@ export const COCKPIT: Theme = {
   // the center; then the inner arc moves out to the bottom of the lane. A
   // link goes out in the reverse order, with the same times.
   const LINE_S = 0.9, OUTER_S = 0.9, INNER_S = 1.8;
+  // Link style: a link takes the color of its hub (the hub of its later
+  // item). All links have the same line and fill.
+  const hubColor = n => { const h = n && nodes.get(n.kind === 'hub' ? n.id : n.colony); return (h && h.color) || '#ffffff'; };
+  const styleOf = l => ({ color: l.color, w: 1.2, a: 0.75, fill: 0.14 });
+  // The legend does not show links: their meaning depends on the hub rule.
+  for (const s of document.querySelectorAll('footer span')) {
+    if (['read', 'write', 'new'].includes(s.textContent.trim())) s.style.display = 'none';
+  }
+  // Link rules: each rule is for one hub and gives the pairs of items to
+  // link, as { a, b }. A new hub gets links when it gets a rule here.
+  // The lanes, the entry and the exit are the same for each rule.
+  const LINK_RULES = [
+    // FILES: the files that tools used one after the other (the last 10).
+    function files() {
+      const hot = [...nodes.values()].filter(n => n.kind !== 'hub' && !n.dying && places.has(n.id) && own(n) && heatOf(n) > 0.02)
+        .sort((a, b) => a.at - b.at).slice(-10);
+      const out = [];
+      for (let i = 1; i < hot.length; i++) out.push({ a: hot[i - 1], b: hot[i] });
+      return out;
+    },
+    // FILES to GIT: a used file that has a git change (the data links the
+    // two by their path) links up with that change.
+    function filesToGit() {
+      const out = [];
+      for (const e of edges.values()) {
+        if (!e.link || e.dying || e.rel !== 'same' || !e.a.startsWith('change:')) continue;
+        const file = nodes.get(e.b), change = nodes.get(e.a);
+        if (!file || !change || file.dying || !places.has(file.id) || !places.has(change.id) || !own(file) || heatOf(file) <= 0.02) continue;
+        out.push({ a: change, b: file });
+      }
+      return out;
+    },
+  ];
   // Lanes: each link sits in its own lane, so links at the same angles do
   // not overlap. Lane 0 is the outermost; each lane is LANE_W of the
   // radius, and a link fills LANE_FILL of its lane.
@@ -279,10 +312,10 @@ export const COCKPIT: Theme = {
     const added = [...cur.commit].filter(id => !prev.commit.has(id));
     for (const id of added) pulses.push({ id, born: now });
     const fixed = id => { const at = old.get(id); return at && { angle: at.angle, depth: at.depth }; };
-    const event = (from, toId, color, key) => {
+    const event = (from, toId, key) => {
       if (!from || !nodes.has(toId) || !places.has(toId)) return;
       const to = { id: toId };
-      const l = { ea: from, eb: to, ga: 0, gb: 0, c: 0, q: 0, dir: 1, event: true, until: now + EVENT_HOLD_MS, color };
+      const l = { ea: from, eb: to, ga: 0, gb: 0, c: 0, q: 0, dir: 1, event: true, until: now + EVENT_HOLD_MS, color: HUB.git };
       l.span = spanFrom(from.angle, places.get(toId).angle); l.lane = laneFor(l.span);
       links.set('ev:' + key + ':' + now, l);
     };
@@ -290,11 +323,11 @@ export const COCKPIT: Theme = {
       if (cur.change.has(id)) continue;
       const repo = old.get(id)?.parent;
       const commit = added.find(c => places.get(c)?.parent === repo);
-      event(fixed(id), commit || repo, HUB.git, id);
+      event(fixed(id), commit || repo, id);
     }
     for (const id of prev.commit) {
       if (cur.commit.has(id)) continue;
-      event(fixed(id), old.get(id)?.parent, '#f2c230', id);
+      event(fixed(id), old.get(id)?.parent, id);
     }
   }
   function spanFrom(a1, a2) {
@@ -303,27 +336,17 @@ export const COCKPIT: Theme = {
   }
 
   function stepLinks(dt) {
-    const hot = [...nodes.values()].filter(n => n.kind !== 'hub' && !n.dying && places.has(n.id) && own(n) && heatOf(n) > 0.02)
-      .sort((a, b) => a.at - b.at).slice(-10);
     const want = new Map();
-    for (let i = 1; i < hot.length; i++) want.set(hot[i - 1].id + '|' + hot[i].id, [hot[i - 1], hot[i]]);
-    // A used file that also has a git change (the data links the two by
-    // their path) links up with that change too: a link from FILES to GIT.
-    const hotIds = new Set(hot.map(n => n.id));
-    for (const e of edges.values()) {
-      if (!e.link || e.dying || e.rel !== 'same' || !e.a.startsWith('change:') || !hotIds.has(e.b)) continue;
-      const file = nodes.get(e.b), change = nodes.get(e.a);
-      if (file && change && places.has(change.id)) want.set(file.id + '|' + change.id, [change, file]);
-    }
-    for (const [key, [a, b]] of want) {
+    for (const rule of LINK_RULES) for (const w of rule()) want.set(w.a.id + '|' + w.b.id, w);
+    for (const [key, w] of want) {
       let l = links.get(key);
       if (!l) {
-        l = { a: a.id, b: b.id, ea: { id: a.id }, eb: { id: b.id }, ga: 0, gb: 0, c: 0, q: 0 };
-        l.span = spanOf(a.id, b.id); l.lane = l.span ? laneFor(l.span) : 0;
+        l = { a: w.a.id, b: w.b.id, ea: { id: w.a.id }, eb: { id: w.b.id }, ga: 0, gb: 0, c: 0, q: 0 };
+        l.span = spanOf(w.a.id, w.b.id); l.lane = l.span ? laneFor(l.span) : 0;
         links.set(key, l);
       }
       l.dir = 1; l.closing = false;
-      l.color = OP[b.op] || '#ffffff';
+      l.color = hubColor(w.b);
     }
     const step = (v, s, up) => Math.max(0, Math.min(1, v + (up ? 1 : -1) * dt / s));
     for (const [key, l] of links) {
@@ -495,8 +518,9 @@ export const COCKPIT: Theme = {
       const pa = endOf(l.ea), pb = endOf(l.eb);
       if (!pa || !pb) { links.delete(key); continue; }
       const ta = pa.t, ra = pa.r, tb = pb.t, rb = pb.r;
-      ctx.strokeStyle = rgba(l.color, 0.75);
-      ctx.lineWidth = 1.2;
+      const st = styleOf(l);
+      ctx.strokeStyle = rgba(st.color, st.a);
+      ctx.lineWidth = st.w;
       const spoke = (t, r0, g) => {
         const r1 = r0 * (1 - ease(g));
         ctx.moveTo(cx + Math.cos(t) * r0, cy + Math.sin(t) * r0);
@@ -517,21 +541,21 @@ export const COCKPIT: Theme = {
       const ro = top * ease(l.c), ri = (top - Rp * LANE_W * LANE_FILL) * ease(l.q);
       const sweep = ((tb - ta + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
       const back = sweep < 0;
-      ctx.fillStyle = rgba(l.color, 0.14);
+      ctx.fillStyle = rgba(st.color, st.fill);
       // While the outer arc moves, a spoke runs from each item down to it, so
       // the spokes from the center turn into the link shape without a jump.
       // The spokes fade out as the outer arc reaches its lane: at rest a link
       // shows only its own shape.
       // A link that goes out does not draw these lines.
       if (l.c < 1 && !l.closing) {
-        ctx.strokeStyle = rgba(l.color, 0.75 * (1 - ease(l.c)));
+        ctx.strokeStyle = rgba(st.color, st.a * (1 - ease(l.c)));
         ctx.beginPath();
         for (const [t, r] of [[ta, ra], [tb, rb]]) if (r > ro) {
           ctx.moveTo(cx + Math.cos(t) * r, cy + Math.sin(t) * r);
           ctx.lineTo(cx + Math.cos(t) * ro, cy + Math.sin(t) * ro);
         }
         ctx.stroke();
-        ctx.strokeStyle = rgba(l.color, 0.75);
+        ctx.strokeStyle = rgba(st.color, st.a);
       }
       ctx.beginPath();
       ctx.arc(cx, cy, ro, ta, ta + sweep, back);
