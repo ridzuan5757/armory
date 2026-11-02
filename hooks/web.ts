@@ -1,6 +1,7 @@
 import type { Snapshot } from '../types'
 
 import { CARAVAN } from './themes/caravan'
+import { COCKPIT } from './themes/cockpit'
 import { HIVE } from './themes/hive'
 import { MOLD } from './themes/mold'
 import { ORBIT } from './themes/orbit'
@@ -17,9 +18,13 @@ import { ORBIT } from './themes/orbit'
 // A theme can also give MAP_VIEW = { pitch }: then the view stays at that
 // tilt and never turns, a drag, a two-finger scroll or the arrow keys move
 // the map, and a pinch (or + and -) zooms, as in a strategy game.
+// A theme can give FOCUS_CAM = false: then an event names itself in the
+// header but does not move or zoom the camera.
+// A map theme can give MAP_BUSY(): while it is true, the page draws at the
+// full frame rate, for a short animation that must move smoothly.
 export type Theme = { name: string; legend: string; script: string }
 
-export const THEMES: Record<string, Theme> = { mold: MOLD, orbit: ORBIT, hive: HIVE, caravan: CARAVAN }
+export const THEMES: Record<string, Theme> = { mold: MOLD, orbit: ORBIT, hive: HIVE, caravan: CARAVAN, cockpit: COCKPIT }
 export const DEFAULT_THEME = 'mold'
 
 // A fingerprint of a theme's page code. Each data update carries the one of
@@ -615,6 +620,7 @@ const SHARED_B = `
   // zoom stays the same while the network turns.
   const view = { yaw: 0.3, pitch: 0.2, vyaw: 0, vpitch: 0, zoom: 1, idle: 0, auto: 0, px: 0, py: 0, vpx: 0, vpy: 0 };
   const MAP = typeof MAP_VIEW === 'undefined' ? undefined : MAP_VIEW;
+  const CAM_FOLLOWS = typeof FOCUS_CAM === 'undefined' || FOCUS_CAM;
   // A map starts with no recent input, so the first events move the camera.
   if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; view.idle = -MAP_HOLD_MS; dprCap = 1.5; resize(); }
   const DIST = 1600, TOP = 56, BOTTOM = 44, SIDE = 24;
@@ -629,7 +635,7 @@ const SHARED_B = `
     if (label.textContent !== text) label.textContent = text;
     // A map keeps the area of its last focus (stay) until Home.
     if (stay && !nodes.has(stay.id)) stay = undefined;
-    const target = (focus || stay) && nodes.get((focus || stay).id);
+    const target = CAM_FOLLOWS && (focus || stay) && nodes.get((focus || stay).id);
     const colony = target && (target.kind === 'hub' ? target.id : target.colony);
     // A theme can give the bounds of its whole world, for the view at rest.
     const whole = !colony && typeof fitBounds === 'function' ? fitBounds() : undefined;
@@ -897,7 +903,8 @@ const SHARED_B = `
     // sleeps: the turn stops, one frame a second, and one at each new data.
     if (document.hidden) return;
     const busy = (!MAP && (alpha > 0.004 || now - lastData < 1500)) || drag || turn || spin ||
-      Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || focus;
+      Math.abs(view.vpx) + Math.abs(view.vpy) > 0.01 || (focus && CAM_FOLLOWS) ||
+      (typeof MAP_BUSY === 'function' && MAP_BUSY());
     const asleep = !busy && now - view.idle > SLEEP_MS && now - lastEvent > SLEEP_MS && !(typeof MAP_AWAKE === 'function' && MAP_AWAKE());
     // After 4 s with no input, the network turns slowly (a map stays); the
     // speed eases in.
@@ -926,7 +933,7 @@ const SHARED_B = `
         view.vpx *= 0.8; view.vpy *= 0.8;
         // A focus brings the camera to its area: the person's pan and zoom
         // ease out. A map never goes back to the whole view by itself.
-        const back = focus ? 0.05 : 0;
+        const back = focus && CAM_FOLLOWS ? 0.05 : 0;
         view.px -= view.px * back; view.py -= view.py * back;
         view.zoom += (1 - view.zoom) * back;
       }
