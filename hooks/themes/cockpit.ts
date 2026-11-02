@@ -652,6 +652,34 @@ export const COCKPIT: Theme = {
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
       ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
     }
+    // Band labels: the hub name in small capitals, curved along its band just
+    // outside it, in the band color. At the bottom of the circle the text
+    // turns over, so it does not show upside down. A band that is
+    // too short for its name shows no label, and the label of the hub under
+    // the pointer gives way to its hover label.
+    ctx.font = '600 10px ui-monospace, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const cw = ctx.measureText('M').width + 2, lr = Rp * 1.1;
+    for (const [id, sc] of bands) {
+      const n = nodes.get(id);
+      if (!n || n.dying || (hover && (hover.id === id || hover.colony === id))) continue;
+      const name = n.label.split(' ')[0];
+      const span = name.length * cw / lr;
+      if (span > (sc.sto - sc.sfrom) * 0.9) continue;
+      // Only the bottom part (more than 30 degrees below the horizontal)
+      // turns over, so a label on the left or right side reads the same way
+      // as the labels above it.
+      const mid = (sc.sfrom + sc.sto) / 2 + spin, low = Math.sin(mid) > 0.5;
+      ctx.fillStyle = rgba(n.color, 0.6 * (1 - 0.6 * tk));
+      for (let i = 0; i < name.length; i++) {
+        const a = low ? mid + span / 2 - (i + 0.5) * cw / lr : mid - span / 2 + (i + 0.5) * cw / lr;
+        ctx.save();
+        ctx.translate(cx + Math.cos(a) * lr, cy + Math.sin(a) * lr);
+        ctx.rotate(low ? a - Math.PI / 2 : a + Math.PI / 2);
+        ctx.fillText(name[i], 0, 0);
+        ctx.restore();
+      }
+    }
     // Hub labels: the hub name and its count, just outside its band. A label
     // shows only while the pointer is on the hub or on one of its items; the
     // circle stops then, so the label does not move.
