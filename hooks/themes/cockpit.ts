@@ -170,18 +170,9 @@ export const COCKPIT: Theme = {
   }
   let spin = 0, lastSim = 0, placed = false;
 
-  // A hub sits just outside the edge, in the middle of its sector. All the
+  // A hub sits just outside the edge, in the middle of its band; an item or
+  // a child sits on its ring at its layout angle (see simulate()). All the
   // rings and the hubs turn by spin.
-  function target(n) {
-    if (n.kind === 'hub') {
-      const s = sectors.get(n.id);
-      return s && { x: Math.cos(s.mid + spin) * R * BAND, y: Math.sin(s.mid + spin) * R * BAND };
-    }
-    const at = places.get(n.id);
-    if (!at) return undefined;
-    const r = R * RING(at.depth), a = at.angle + spin;
-    return { x: Math.cos(a) * r, y: Math.sin(a) * r };
-  }
 
   function simulate() {
     if (gen !== layoutGen || nodes.size !== layoutSize) {
@@ -197,11 +188,25 @@ export const COCKPIT: Theme = {
     alpha *= 0.95;
     // On the first layout the markers go to their places at once, so the
     // circle fades in already in place; later markers move there.
+    // A marker moves by angle and by radius, not on a straight line, at the
+    // same step as the band ends. Thus it stays on its band while the bands
+    // grow or shrink. sa is the angle that shows (without spin), sr the radius.
     const k = placed ? 0.18 : 1;
     for (const n of nodes.values()) {
-      const q = target(n);
-      if (!q) continue;
-      n.x += (q.x - n.x) * k; n.y += (q.y - n.y) * k; n.z = 0;
+      let ga, gr;
+      if (n.kind === 'hub') {
+        const s = sectors.get(n.id);
+        if (!s) continue;
+        ga = s.mid; gr = R * BAND;
+      } else {
+        const at = places.get(n.id);
+        if (!at) continue;
+        ga = at.angle; gr = R * RING(at.depth);
+      }
+      if (n.sa === undefined) { n.sa = Math.atan2(n.y, n.x) - spin; n.sr = Math.hypot(n.x, n.y); }
+      const turn = ((ga - n.sa) % TAU + 3 * Math.PI) % TAU - Math.PI;
+      n.sa += turn * k; n.sr += (gr - n.sr) * k;
+      n.x = Math.cos(n.sa + spin) * n.sr; n.y = Math.sin(n.sa + spin) * n.sr; n.z = 0;
     }
     for (const s of sectors.values()) { s.sfrom += (s.from - s.sfrom) * k; s.sto += (s.to - s.sto) * k; }
     if (nodes.size) placed = true;
