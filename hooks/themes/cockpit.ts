@@ -1,6 +1,6 @@
 // Theme 5, cockpit: a mobile suit cockpit display. For now it shows the nodes
-// only. The panel is one large circle: each hub has a sector of the edge, its
-// items sit on the edge in that sector, and their children sit on rings
+// only. The panel is one large circle: each hub has a band of the edge, its
+// items sit on the edge in that band, and their children sit on rings
 // further in. The whole circle turns slowly, so children stay with their
 // parents.
 import type { Theme } from '../web'
@@ -17,14 +17,14 @@ export const COCKPIT: Theme = {
   // The panel always shows the whole circle: no drag, zoom or pan.
   const FIXED_VIEW = true;
 
-  // The order of the sectors around the edge, from the top, clockwise.
+  // The order of the bands around the edge, from the top, clockwise.
   const ORDER = ['hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:schedule', 'hub:sessions', 'hub:usage', 'hub:machine', 'hub:plugins', 'hub:skills', 'hub:memory'];
 
   // The circle has a fixed radius R, so it never changes size. Depth 1 is on
   // the edge; each level further in is on a ring at RING(d) of R.
-  const R = 420, GAP = 0.035, BAND = 1.06;
+  const R = 420, GAP = 0.035, HUB_R = 1.06;
   const RING = d => 1 - 0.7 * (1 - Math.pow(0.8, d - 1));
-  let sectors = new Map(), places = new Map(), segments = [], layoutGen = -1, layoutSize = -1;
+  let bands = new Map(), places = new Map(), segments = [], layoutGen = -1, layoutSize = -1;
 
   function layout() {
     const kids = new Map();
@@ -54,15 +54,15 @@ export const COCKPIT: Theme = {
     for (const h of hubs) share.set(h.id, Math.max(1, (kids.get(h.id) || []).reduce((s, c) => s + Math.pow(weigh(c), 0.75), 0)));
     const total = [...share.values()].reduce((s, w) => s + w, 0) || 1;
     const free = 2 * Math.PI - GAP * hubs.length;
-    const nextSectors = new Map(), nextPlaces = new Map(), nextSegments = [];
+    const nextBands = new Map(), nextPlaces = new Map(), nextSegments = [];
     let a = -Math.PI / 2;
     for (const h of hubs) {
       const from = a + GAP / 2, to = from + free * share.get(h.id) / total;
       // sfrom and sto are the angles that show: they move to from and to in
       // simulate(), so a band that grows pushes its neighbors smoothly. A
       // new band grows from its middle.
-      const old = sectors.get(h.id), mid = (from + to) / 2;
-      nextSectors.set(h.id, { from, to, mid,
+      const old = bands.get(h.id), mid = (from + to) / 2;
+      nextBands.set(h.id, { from, to, mid,
         sfrom: old ? old.sfrom : placed ? mid : from, sto: old ? old.sto : placed ? mid : to });
       const place = (id, lo, hi, d) => {
         const list = (kids.get(id) || []).slice().sort((p, q) => p.id.localeCompare(q.id));
@@ -81,7 +81,7 @@ export const COCKPIT: Theme = {
       place(h.id, from, to, 1);
       a = to + GAP / 2;
     }
-    sectors = nextSectors;
+    bands = nextBands;
     places = nextPlaces;
     segments = nextSegments;
   }
@@ -195,9 +195,9 @@ export const COCKPIT: Theme = {
     for (const n of nodes.values()) {
       let ga, gr;
       if (n.kind === 'hub') {
-        const s = sectors.get(n.id);
+        const s = bands.get(n.id);
         if (!s) continue;
-        ga = s.mid; gr = R * BAND;
+        ga = s.mid; gr = R * HUB_R;
       } else {
         const at = places.get(n.id);
         if (!at) continue;
@@ -208,7 +208,7 @@ export const COCKPIT: Theme = {
       n.sa += turn * k; n.sr += (gr - n.sr) * k;
       n.x = Math.cos(n.sa + spin) * n.sr; n.y = Math.sin(n.sa + spin) * n.sr; n.z = 0;
     }
-    for (const s of sectors.values()) { s.sfrom += (s.from - s.sfrom) * k; s.sto += (s.to - s.sto) * k; }
+    for (const s of bands.values()) { s.sfrom += (s.from - s.sfrom) * k; s.sto += (s.to - s.sto) * k; }
     if (nodes.size) placed = true;
   }
 
@@ -222,11 +222,11 @@ export const COCKPIT: Theme = {
 
   const spot = { x: 0, y: 0, z: 0 };
 
-  // Links: the items that tools used one after the other link up, as an
-  // annular sector (the area between two circles and two lines from the
-  // center). Key 'a|b'. Each link has its own progress for each part, from
+  // Links: the items that tools used one after the other link up. A link has
+  // the shape of an annular sector (the area between two circles and two
+  // lines from the center). Key 'a|b'. Each link has its own progress for each part, from
   // 0 (gone) to 1 (in place):
-  //   ga, gb  the line from item a, and from item b, to the center
+  //   ga, gb  the spoke (line) from item a, and from item b, to the center
   //   c       the outer arc: 0 at the center, 1 at the top of the lane
   //   q       the inner arc: 0 at the center, 1 at the bottom of the lane
   // A link comes in: both lines grow to the center at the same time; then
@@ -234,9 +234,9 @@ export const COCKPIT: Theme = {
   // the center; then the inner arc moves out to the bottom of the lane. A
   // link goes out in the reverse order, with the same times.
   const LINE_S = 0.9, OUTER_S = 0.9, INNER_S = 1.8;
-  // Lanes: each sector sits in its own band, so sectors at the same angles
-  // do not overlap. Lane 0 is the outermost; each lane is LANE_W of the
-  // radius, and a sector fills LANE_FILL of its lane.
+  // Lanes: each link sits in its own lane, so links at the same angles do
+  // not overlap. Lane 0 is the outermost; each lane is LANE_W of the
+  // radius, and a link fills LANE_FILL of its lane.
   const LANES = 6, LANE_TOP = 0.93, LANE_W = 0.11, LANE_FILL = 0.8;
   // The arc a link covers (the shorter way around), from the layout angles.
   function spanOf(aId, bId) {
@@ -247,7 +247,7 @@ export const COCKPIT: Theme = {
   }
   const TAU = 2 * Math.PI, inSpan = (x, sp) => ((x - sp[0]) % TAU + TAU) % TAU <= sp[1];
   const overlap = (u, v) => inSpan(u[0], v) || inSpan(v[0], u);
-  // The outermost lane that no other sector at the same angles uses.
+  // The outermost lane that no other link at the same angles uses.
   function laneFor(span) {
     const used = new Set();
     for (const o of links.values()) if (o.span && o.lane !== undefined && overlap(span, o.span)) used.add(o.lane);
@@ -260,12 +260,12 @@ export const COCKPIT: Theme = {
   const own = n => !(n.type === 'file' && n.data && n.data.kind === 'dir') && n.type !== 'mcp';
   // Git events. The theme compares the git items of each data update with
   // the last one:
-  //   a change that is gone   a sector from where it was to the new commit
+  //   a change that is gone   an event link from where it was to the new commit
   //                           of its repo (a commit), or to the repo
   //   a new commit            a short pulse on its marker
-  //   a commit that is gone   a sector from where it was to its repo (a push)
-  // A gone item has no node, so its end of the sector keeps its last place
-  // on the circle (angle and depth). These sectors hold for EVENT_HOLD_MS.
+  //   a commit that is gone   an event link from where it was to its repo (a push)
+  // A gone item has no node, so its end of the event link keeps its last
+  // place on the circle (angle and depth). Event links hold for EVENT_HOLD_MS.
   const EVENT_HOLD_MS = 6000, PULSE_MS = 1500;
   const pulses = [];
   let lastGit;
@@ -308,7 +308,7 @@ export const COCKPIT: Theme = {
     const want = new Map();
     for (let i = 1; i < hot.length; i++) want.set(hot[i - 1].id + '|' + hot[i].id, [hot[i - 1], hot[i]]);
     // A used file that also has a git change (the data links the two by
-    // their path) links up with that change too: a sector from FILES to GIT.
+    // their path) links up with that change too: a link from FILES to GIT.
     const hotIds = new Set(hot.map(n => n.id));
     for (const e of edges.values()) {
       if (!e.link || e.dying || e.rel !== 'same' || !e.a.startsWith('change:') || !hotIds.has(e.b)) continue;
@@ -322,7 +322,7 @@ export const COCKPIT: Theme = {
         l.span = spanOf(a.id, b.id); l.lane = l.span ? laneFor(l.span) : 0;
         links.set(key, l);
       }
-      l.dir = 1;
+      l.dir = 1; l.closing = false;
       l.color = OP[b.op] || '#ffffff';
     }
     const step = (v, s, up) => Math.max(0, Math.min(1, v + (up ? 1 : -1) * dt / s));
@@ -337,13 +337,17 @@ export const COCKPIT: Theme = {
         else if (l.c < 1) l.c = step(l.c, OUTER_S, true);
         else l.q = step(l.q, INNER_S, true);
       } else {
-        // Out: the inner arc, then the outer arc, then both lines.
-        if (l.q > 0) l.q = step(l.q, INNER_S, false);
-        else if (l.c > 0) l.c = step(l.c, OUTER_S, false);
-        else { l.ga = step(l.ga, LINE_S, false); l.gb = step(l.gb, LINE_S, false); }
+        // Out: the inner arc moves to the center, then the outer arc. The
+        // sides of the area go to the center with the outer arc, and no
+        // spokes stay behind: the link ends when the outer arc gets to the
+        // center. A link that goes out before it has an area (only spokes)
+        // takes its spokes back to the items.
+        if (l.q > 0) { l.q = step(l.q, INNER_S, false); l.closing = true; }
+        else if (l.c > 0) { l.c = step(l.c, OUTER_S, false); l.closing = true; }
+        else if (!l.closing) { l.ga = step(l.ga, LINE_S, false); l.gb = step(l.gb, LINE_S, false); }
       }
       l.moving = l.dir > 0 ? (l.ga < 1 || l.gb < 1 || l.c < 1 || l.q < 1) : true;
-      if (l.dir < 0 && l.ga === 0 && l.gb === 0 && l.c === 0) links.delete(key);
+      if (l.dir < 0 && l.c === 0 && (l.closing || (l.ga === 0 && l.gb === 0))) links.delete(key);
     }
   }
   // A moving link asks for the full frame rate, so it grows smoothly.
@@ -447,7 +451,7 @@ export const COCKPIT: Theme = {
     }
     // The edge: one colored band per hub, at the angles that show (sfrom,
     // sto), also for a hub with no items.
-    for (const [id, sc] of sectors) {
+    for (const [id, sc] of bands) {
       const p = nodes.get(id);
       if (!p || p.dying) continue;
       const lo = sc.sfrom + spin, hi = sc.sto + spin;
@@ -462,7 +466,7 @@ export const COCKPIT: Theme = {
     // two neighbor bands, as on a gauge. Two bands share one mark, so short
     // bands do not make a cluster of marks. The marks are a neutral grey,
     // a color that no hub uses (see HUB in web.ts).
-    const live = [...sectors].filter(([id]) => { const p = nodes.get(id); return p && !p.dying; })
+    const live = [...bands].filter(([id]) => { const p = nodes.get(id); return p && !p.dying; })
       .map(([, sc]) => sc).sort((u, v) => u.sfrom - v.sfrom);
     if (live.length > 1) {
       ctx.lineWidth = 1.2;
@@ -506,7 +510,7 @@ export const COCKPIT: Theme = {
         ctx.stroke();
         continue;
       }
-      // The sector: the shorter way around from A to B.
+      // The link shape: the shorter way around from A to B.
       // The outer arc moves between the center and the top of the lane, and
       // the inner arc between the center and the bottom of the lane.
       const top = Rp * (LANE_TOP - (l.lane || 0) * LANE_W);
@@ -514,11 +518,12 @@ export const COCKPIT: Theme = {
       const sweep = ((tb - ta + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
       const back = sweep < 0;
       ctx.fillStyle = rgba(l.color, 0.14);
-      // While the outer arc moves, a line runs from each item down to it, so
-      // the lines from the center turn into the sector without a jump. The
-      // lines fade out as the outer arc reaches its lane: at rest a sector
+      // While the outer arc moves, a spoke runs from each item down to it, so
+      // the spokes from the center turn into the link shape without a jump.
+      // The spokes fade out as the outer arc reaches its lane: at rest a link
       // shows only its own shape.
-      if (l.c < 1) {
+      // A link that goes out does not draw these lines.
+      if (l.c < 1 && !l.closing) {
         ctx.strokeStyle = rgba(l.color, 0.75 * (1 - ease(l.c)));
         ctx.beginPath();
         for (const [t, r] of [[ta, ra], [tb, rb]]) if (r > ro) {
@@ -628,7 +633,7 @@ export const COCKPIT: Theme = {
     // circle stops then, so the label does not move.
     for (const n of nodes.values()) {
       if (n.kind !== 'hub' || n.dying || !hover || (hover.id !== n.id && hover.colony !== n.id)) continue;
-      const sc = sectors.get(n.id);
+      const sc = bands.get(n.id);
       if (!sc) continue;
       const a = sc.mid + spin, ux = Math.cos(a), uy = Math.sin(a);
       const x = cx + ux * Rp * 1.1, y = cy + uy * Rp * 1.1;
