@@ -115,6 +115,15 @@ export const COCKPIT: Theme = {
     new FontFace('Cockpit Digicode', 'url(data:font/woff2;base64,${COCKPIT_DIGICODE_WOFF2})', { weight: '900' })
       .load().then(f => document.fonts.add(f)).catch(() => {});
   } catch {}
+  // The pointer on the canvas, in canvas pixels, for the plain terms (see
+  // the Trans-Am terms in draw()). The engine does not keep it.
+  const SHUFFLE_MS = 35;
+  let pointer;
+  canvas.addEventListener('pointermove', ev => {
+    const b = canvas.getBoundingClientRect();
+    pointer = { x: ev.clientX - b.left, y: ev.clientY - b.top };
+  });
+  canvas.addEventListener('pointerleave', () => { pointer = undefined; });
   // Three terms for each built-in command, which has no description file.
   const BUILTIN_TERMS = {
     'add-dir': ['FOLDER', 'ACCESS', 'WORKSPACE'], agents: ['SUBAGENT', 'ROSTER', 'CONFIG'],
@@ -632,23 +641,34 @@ export const COCKPIT: Theme = {
       const terms = (data && data.terms) || BUILTIN_TERMS[ta.name] || ['CLAUDE', 'CODE', 'COMMAND'];
       ctx.fillStyle = rgba('#ffffff', 0.92 * tk);
       ctx.fillText('SYSTEM', cx, cy + size * 0.5);
+      // The terms show in Digicode. While the pointer is on the center of the
+      // circle, they show as plain letters in TA_FONT. At each start of the
+      // mode and at each change of font, the letters shuffle: each letter
+      // starts at A and steps through the alphabet to its own letter, one
+      // step each SHUFFLE_MS, so A stops first and Z stops last.
+      const plain = !!pointer && Math.hypot(pointer.x - cx, pointer.y - cy) < Rp * 0.4;
+      if (ta.plain !== plain || ta.shuffled !== ta.pop) { ta.plain = plain; ta.shuffled = ta.pop; ta.shuffleAt = now; }
+      const line = terms.join('  ').toUpperCase();
+      const steps = Math.floor((now - ta.shuffleAt) / SHUFFLE_MS);
+      const shown = line.replace(/[A-Z]/g, ch => String.fromCharCode(Math.min(ch.charCodeAt(0), 65 + steps)));
       // The Digicode letters are 35 % larger than SYSTEM, and a long line
-      // shrinks to stay inside 85 % of the circle. The font has one thin
-      // weight, so a stroke of the same color makes the lines as thick as
-      // the lines of SYSTEM.
-      const line = terms.join('  ');
+      // shrinks to stay inside 85 % of the circle. The Digicode font has one
+      // thin weight, so a stroke of the same color makes the lines as thick
+      // as the lines of SYSTEM. The plain letters are heavy, so they have no
+      // stroke.
+      const font = plain ? TA_FONT : TA_TERMS_FONT;
       let tsz = small * 1.35;
-      ctx.font = '900 ' + tsz + 'px ' + TA_TERMS_FONT;
+      ctx.font = '900 ' + tsz + 'px ' + font;
       if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(tsz * 0.3) + 'px';
       tsz *= Math.min(1, Rp * 1.7 / Math.max(1, ctx.measureText(line).width));
-      ctx.font = '900 ' + tsz + 'px ' + TA_TERMS_FONT;
+      ctx.font = '900 ' + tsz + 'px ' + font;
       if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(tsz * 0.3) + 'px';
       const ty = cy + size * 0.5 + small * 0.6 + tsz * 0.75;
       ctx.fillStyle = ctx.strokeStyle = rgba(TA_TERMS, 0.95 * tk);
       ctx.lineWidth = tsz * 0.07;
       ctx.lineJoin = 'miter';
-      ctx.fillText(line, cx, ty);
-      ctx.strokeText(line, cx, ty);
+      ctx.fillText(shown, cx, ty);
+      if (!plain) ctx.strokeText(shown, cx, ty);
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
       ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
     }
