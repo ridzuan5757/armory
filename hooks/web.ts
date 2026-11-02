@@ -624,7 +624,14 @@ const SHARED_B = `
   const MAP = typeof MAP_VIEW === 'undefined' ? undefined : MAP_VIEW;
   const CAM_FOLLOWS = typeof FOCUS_CAM === 'undefined' || FOCUS_CAM;
   const FIXED = typeof FIXED_VIEW !== 'undefined' && !!FIXED_VIEW;
-  if (FIXED) canvas.style.cursor = 'default';
+  // A fixed view does not zoom in at the start: the camera goes to its fit at
+  // once, and the canvas fades in when the first nodes are there.
+  let shown = !FIXED;
+  if (FIXED) {
+    canvas.style.cursor = 'default';
+    canvas.style.opacity = '0';
+    canvas.style.transition = 'opacity 0.8s ease-out';
+  }
   // A map starts with no recent input, so the first events move the camera.
   if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; view.idle = -MAP_HOLD_MS; dprCap = 1.5; resize(); }
   const DIST = 1600, TOP = 56, BOTTOM = 44, SIDE = 24;
@@ -659,9 +666,10 @@ const SHARED_B = `
     if (whole) { cx = whole.x; cy = whole.y; cz = whole.z; r = whole.r; }
     const s = whole ? Math.min((W - 2 * SIDE) / whole.w, (H - TOP - BOTTOM) / whole.h)
       : Math.min((W - 2 * SIDE) / (2 * r), (H - TOP - BOTTOM) / (2 * r), 2.4) * 1.12 * (DIST - r) / DIST;
-    const k = target ? 0.05 : 0.04;
+    const k = FIXED ? 1 : target ? 0.05 : 0.04;
     cam.s += (s - cam.s) * k; cam.x += (cx - cam.x) * k; cam.y += (cy - cam.y) * k;
     cam.z += (cz - cam.z) * k; cam.r += (r - cam.r) * k;
+    if (!shown) { shown = true; requestAnimationFrame(() => { canvas.style.opacity = '1'; }); }
   }
   function project(n) {
     const x = n.x - cam.x - view.px, y = n.y - cam.y - view.py, z = n.z - cam.z;
