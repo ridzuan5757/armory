@@ -5,6 +5,7 @@
 // parents.
 import type { Theme } from '../web'
 import { COCKPIT_FONT_WOFF2 } from './cockpit-font'
+import { COCKPIT_DIGICODE_WOFF2 } from './cockpit-digicode'
 
 export const COCKPIT: Theme = {
   name: 'cockpit',
@@ -98,6 +99,14 @@ export const COCKPIT: Theme = {
   const TA_FONT = '"Cockpit Display", ui-sans-serif, -apple-system, "Helvetica Neue", sans-serif';
   try {
     new FontFace('Cockpit Display', 'url(data:font/woff2;base64,${COCKPIT_FONT_WOFF2})', { weight: '900' })
+      .load().then(f => document.fonts.add(f)).catch(() => {});
+  } catch {}
+  // The three terms under SYSTEM use "Cockpit Digicode", the English Digicode
+  // letters of the Digimoji fan font (see cockpit-digicode.ts). A character
+  // that it does not have, such as a digit, uses TA_FONT.
+  const TA_TERMS_FONT = '"Cockpit Digicode", ' + TA_FONT;
+  try {
+    new FontFace('Cockpit Digicode', 'url(data:font/woff2;base64,${COCKPIT_DIGICODE_WOFF2})', { weight: '900' })
       .load().then(f => document.fonts.add(f)).catch(() => {});
   } catch {}
   // Three terms for each built-in command, which has no description file.
@@ -571,9 +580,23 @@ export const COCKPIT: Theme = {
       const terms = (data && data.terms) || BUILTIN_TERMS[ta.name] || ['CLAUDE', 'CODE', 'COMMAND'];
       ctx.fillStyle = rgba('#ffffff', 0.92 * tk);
       ctx.fillText('SYSTEM', cx, cy + size * 0.5);
-      ctx.fillStyle = rgba(TA_TERMS, 0.95 * tk);
-      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(small * 0.4) + 'px';
-      ctx.fillText(terms.join('  '), cx, cy + size * 0.5 + small * 1.25);
+      // The Digicode letters are 35 % larger than SYSTEM, and a long line
+      // shrinks to stay inside 85 % of the circle. The font has one thin
+      // weight, so a stroke of the same color makes the lines as thick as
+      // the lines of SYSTEM.
+      const line = terms.join('  ');
+      let tsz = small * 1.35;
+      ctx.font = '900 ' + tsz + 'px ' + TA_TERMS_FONT;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(tsz * 0.3) + 'px';
+      tsz *= Math.min(1, Rp * 1.7 / Math.max(1, ctx.measureText(line).width));
+      ctx.font = '900 ' + tsz + 'px ' + TA_TERMS_FONT;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(tsz * 0.3) + 'px';
+      const ty = cy + size * 0.5 + small * 0.6 + tsz * 0.75;
+      ctx.fillStyle = ctx.strokeStyle = rgba(TA_TERMS, 0.95 * tk);
+      ctx.lineWidth = tsz * 0.07;
+      ctx.lineJoin = 'miter';
+      ctx.fillText(line, cx, ty);
+      ctx.strokeText(line, cx, ty);
       if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
       ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
     }
