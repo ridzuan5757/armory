@@ -48,16 +48,22 @@ export const COCKPIT: Theme = {
     const rank = id => (ORDER.indexOf(id) + 99) % 99;
     const hubs = [...nodes.values()].filter(n => n.kind === 'hub' && !n.dying)
       .sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
-    // A hub's share of the edge: its items' weight, with a floor.
+    // A hub's share of the edge: its items' weight, relative to the other
+    // hubs. The floor is one item, so an empty hub keeps only a short band.
     const share = new Map();
-    for (const h of hubs) share.set(h.id, Math.max(6, (kids.get(h.id) || []).reduce((s, c) => s + Math.pow(weigh(c), 0.75), 0)));
+    for (const h of hubs) share.set(h.id, Math.max(1, (kids.get(h.id) || []).reduce((s, c) => s + Math.pow(weigh(c), 0.75), 0)));
     const total = [...share.values()].reduce((s, w) => s + w, 0) || 1;
     const free = 2 * Math.PI - GAP * hubs.length;
     const nextSectors = new Map(), nextPlaces = new Map(), nextSegments = [];
     let a = -Math.PI / 2;
     for (const h of hubs) {
       const from = a + GAP / 2, to = from + free * share.get(h.id) / total;
-      nextSectors.set(h.id, { from, to, mid: (from + to) / 2 });
+      // sfrom and sto are the angles that show: they move to from and to in
+      // simulate(), so a band that grows pushes its neighbors smoothly. A
+      // new band grows from its middle.
+      const old = sectors.get(h.id), mid = (from + to) / 2;
+      nextSectors.set(h.id, { from, to, mid,
+        sfrom: old ? old.sfrom : placed ? mid : from, sto: old ? old.sto : placed ? mid : to });
       const place = (id, lo, hi, d) => {
         const list = (kids.get(id) || []).slice().sort((p, q) => p.id.localeCompare(q.id));
         // The children of one parent form one segment on their ring.
@@ -197,6 +203,7 @@ export const COCKPIT: Theme = {
       if (!q) continue;
       n.x += (q.x - n.x) * k; n.y += (q.y - n.y) * k; n.z = 0;
     }
+    for (const s of sectors.values()) { s.sfrom += (s.from - s.sfrom) * k; s.sto += (s.to - s.sto) * k; }
     if (nodes.size) placed = true;
   }
 
@@ -433,30 +440,27 @@ export const COCKPIT: Theme = {
         ctx.beginPath(); ctx.arc(cx, cy, rr, a, a + 6.2832 / ring.n * 0.6); ctx.stroke();
       }
     }
-    // The edge: one colored band per hub.
-    for (const sg of segments) {
-      if (sg.depth !== 1) continue;
-      const p = nodes.get(sg.parent);
+    // The edge: one colored band per hub, at the angles that show (sfrom,
+    // sto), also for a hub with no items.
+    for (const [id, sc] of sectors) {
+      const p = nodes.get(id);
       if (!p || p.dying) continue;
-      // The edge segments sit just outside the edge ring, so the nodes do
-      // not cover them.
-      const r = Rp * (sg.depth === 1 ? 1.035 : RING(sg.depth)), gap = Math.min(3 / r, (sg.hi - sg.lo) * 0.2);
-      // The edge band is thick: about 2.2 % of the radius.
-      ctx.lineWidth = sg.depth === 1 ? Math.max(3, Rp * 0.022) : 1.5;
-      ctx.strokeStyle = rgba(p.color, sg.depth === 1 ? 0.55 : 0.4);
-      ctx.beginPath(); ctx.arc(cx, cy, r, sg.lo + spin + gap, sg.hi + spin - gap); ctx.stroke();
-      // End marks: a short cross line at each end of a hub's sector, as on a
-      // gauge.
-      if (sg.depth === 1) {
-        ctx.lineWidth = 1.2;
-        ctx.strokeStyle = rgba(p.color, 0.8);
-        ctx.beginPath();
-        for (const e of [sg.lo + spin, sg.hi + spin]) {
-          ctx.moveTo(cx + Math.cos(e) * Rp, cy + Math.sin(e) * Rp);
-          ctx.lineTo(cx + Math.cos(e) * Rp * 1.08, cy + Math.sin(e) * Rp * 1.08);
-        }
-        ctx.stroke();
+      const lo = sc.sfrom + spin, hi = sc.sto + spin;
+      // The band sits just outside the edge ring, so the nodes do not cover it.
+      const r = Rp * 1.035, gap = Math.min(3 / r, (hi - lo) * 0.2);
+      // The band is thick: about 2.2 % of the radius.
+      ctx.lineWidth = Math.max(3, Rp * 0.022);
+      ctx.strokeStyle = rgba(p.color, 0.55);
+      ctx.beginPath(); ctx.arc(cx, cy, r, lo + gap, hi - gap); ctx.stroke();
+      // End marks: a short cross line at each end of the band, as on a gauge.
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = rgba(p.color, 0.8);
+      ctx.beginPath();
+      for (const e of [lo, hi]) {
+        ctx.moveTo(cx + Math.cos(e) * Rp, cy + Math.sin(e) * Rp);
+        ctx.lineTo(cx + Math.cos(e) * Rp * 1.08, cy + Math.sin(e) * Rp * 1.08);
       }
+      ctx.stroke();
     }
     // Links, under the markers.
     stepLinks(dt);
