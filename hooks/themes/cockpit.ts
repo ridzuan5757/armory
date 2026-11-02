@@ -63,7 +63,7 @@ export const COCKPIT: Theme = {
         let x = lo;
         for (const c of list) {
           const w = (hi - lo) * wOf(c) / sum;
-          nextPlaces.set(c.id, { angle: x + w / 2, depth: d });
+          nextPlaces.set(c.id, { angle: x + w / 2, depth: d, parent: id });
           place(c.id, x, x + w, d + 1);
           x += w;
         }
@@ -96,7 +96,12 @@ export const COCKPIT: Theme = {
   }
 
   function simulate() {
-    if (gen !== layoutGen || nodes.size !== layoutSize) { layout(); layoutGen = gen; layoutSize = nodes.size; }
+    if (gen !== layoutGen || nodes.size !== layoutSize) {
+      const old = places;
+      layout();
+      if (gen !== layoutGen) gitEvents(old);
+      layoutGen = gen; layoutSize = nodes.size;
+    }
     const now = performance.now();
     const dt = lastSim ? Math.min(0.5, (now - lastSim) / 1000) : 0;
     lastSim = now;
@@ -155,6 +160,50 @@ export const COCKPIT: Theme = {
   // Only an item a tool used makes a link: a folder or an MCP server takes
   // the time of use of the newest item below it.
   const own = n => !(n.type === 'file' && n.data && n.data.kind === 'dir') && n.type !== 'mcp';
+  // Git events. The theme compares the git items of each data update with
+  // the last one:
+  //   a change that is gone   a sector from where it was to the new commit
+  //                           of its repo (a commit), or to the repo
+  //   a new commit            a short pulse on its marker
+  //   a commit that is gone   a sector from where it was to its repo (a push)
+  // A gone item has no node, so its end of the sector keeps its last place
+  // on the circle (angle and depth). These sectors hold for EVENT_HOLD_MS.
+  const EVENT_HOLD_MS = 6000, PULSE_MS = 1500;
+  const pulses = [];
+  let lastGit;
+  function gitEvents(old) {
+    const now = performance.now();
+    const cur = { change: new Set(), commit: new Set() };
+    for (const n of nodes.values()) if (!n.dying && (n.type === 'change' || n.type === 'commit')) cur[n.type].add(n.id);
+    const prev = lastGit;
+    lastGit = cur;
+    if (!prev) return;
+    const added = [...cur.commit].filter(id => !prev.commit.has(id));
+    for (const id of added) pulses.push({ id, born: now });
+    const fixed = id => { const at = old.get(id); return at && { angle: at.angle, depth: at.depth }; };
+    const event = (from, toId, color, key) => {
+      if (!from || !nodes.has(toId) || !places.has(toId)) return;
+      const to = { id: toId };
+      const l = { ea: from, eb: to, ga: 0, gb: 0, c: 0, q: 0, dir: 1, event: true, until: now + EVENT_HOLD_MS, color };
+      l.span = spanFrom(from.angle, places.get(toId).angle); l.lane = laneFor(l.span);
+      links.set('ev:' + key + ':' + now, l);
+    };
+    for (const id of prev.change) {
+      if (cur.change.has(id)) continue;
+      const repo = old.get(id)?.parent;
+      const commit = added.find(c => places.get(c)?.parent === repo);
+      event(fixed(id), commit || repo, HUB.git, id);
+    }
+    for (const id of prev.commit) {
+      if (cur.commit.has(id)) continue;
+      event(fixed(id), old.get(id)?.parent, '#f2c230', id);
+    }
+  }
+  function spanFrom(a1, a2) {
+    const sweep = ((a2 - a1 + 3 * Math.PI) % (2 * Math.PI)) - Math.PI;
+    return sweep >= 0 ? [a1, sweep] : [a1 + sweep, -sweep];
+  }
+
   function stepLinks(dt) {
     const hot = [...nodes.values()].filter(n => n.kind !== 'hub' && !n.dying && places.has(n.id) && own(n) && heatOf(n) > 0.02)
       .sort((a, b) => a.at - b.at).slice(-10);
@@ -171,7 +220,7 @@ export const COCKPIT: Theme = {
     for (const [key, [a, b]] of want) {
       let l = links.get(key);
       if (!l) {
-        l = { a: a.id, b: b.id, ga: 0, gb: 0, c: 0, q: 0 };
+        l = { a: a.id, b: b.id, ea: { id: a.id }, eb: { id: b.id }, ga: 0, gb: 0, c: 0, q: 0 };
         l.span = spanOf(a.id, b.id); l.lane = l.span ? laneFor(l.span) : 0;
         links.set(key, l);
       }
@@ -180,7 +229,8 @@ export const COCKPIT: Theme = {
     }
     const step = (v, s, up) => Math.max(0, Math.min(1, v + (up ? 1 : -1) * dt / s));
     for (const [key, l] of links) {
-      if (!want.has(key)) l.dir = -1;
+      if (l.event) { if (performance.now() > l.until) l.dir = -1; }
+      else if (!want.has(key)) l.dir = -1;
       if (calm) {
         l.ga = l.gb = l.c = l.q = l.dir > 0 ? 1 : 0;
       } else if (l.dir > 0) {
@@ -201,6 +251,7 @@ export const COCKPIT: Theme = {
   // A moving link asks for the full frame rate, so it grows smoothly.
   function MAP_BUSY() {
     for (const l of links.values()) if (l.moving) return true;
+    if (pulses.length) return true;
     return false;
   }
   // The two dashed rings outside the bands turn on their own, in opposite
@@ -283,9 +334,16 @@ export const COCKPIT: Theme = {
     stepLinks(dt);
     ctx.lineJoin = 'round';
     for (const [key, l] of links) {
-      const A = nodes.get(l.a), B = nodes.get(l.b);
-      if (!A || !B) { links.delete(key); continue; }
-      const ta = Math.atan2(A.sy - cy, A.sx - cx), ra = Math.hypot(A.sx - cx, A.sy - cy);
+      // An end is a node, or (for a gone git item) a fixed place on the
+      // circle that turns with it.
+      const endOf = e => {
+        if (!e.id) return { t: e.angle + spin, r: Rp * RING(e.depth) };
+        const n = nodes.get(e.id);
+        return n && { t: Math.atan2(n.sy - cy, n.sx - cx), r: Math.hypot(n.sx - cx, n.sy - cy) };
+      };
+      const pa = endOf(l.ea), pb = endOf(l.eb);
+      if (!pa || !pb) { links.delete(key); continue; }
+      const ta = pa.t, ra = pa.r, tb = pb.t, rb = pb.r;
       ctx.strokeStyle = rgba(l.color, 0.75);
       ctx.lineWidth = 1.2;
       const spoke = (t, r0, g) => {
@@ -297,12 +355,11 @@ export const COCKPIT: Theme = {
       if (l.c === 0) {
         ctx.beginPath();
         spoke(ta, ra, l.ga);
-        spoke(Math.atan2(B.sy - cy, B.sx - cx), Math.hypot(B.sx - cx, B.sy - cy), l.gb);
+        spoke(tb, rb, l.gb);
         ctx.stroke();
         continue;
       }
       // The sector: the shorter way around from A to B.
-      const tb = Math.atan2(B.sy - cy, B.sx - cx), rb = Math.hypot(B.sx - cx, B.sy - cy);
       // The outer arc moves between the center and the top of the lane, and
       // the inner arc between the center and the bottom of the lane.
       const top = Rp * (LANE_TOP - (l.lane || 0) * LANE_W);
@@ -345,6 +402,14 @@ export const COCKPIT: Theme = {
         ctx.moveTo(n.sx, n.sy - d); ctx.lineTo(n.sx + d, n.sy); ctx.lineTo(n.sx, n.sy + d); ctx.lineTo(n.sx - d, n.sy); ctx.closePath();
       } else ctx.rect(n.sx - r, n.sy - r, 2 * r, 2 * r);
       ctx.fill();
+    }
+    // Pulses: a ring that spreads from a new commit and fades.
+    for (let i = pulses.length - 1; i >= 0; i--) {
+      const pl = pulses[i], n = nodes.get(pl.id), k = (now - pl.born) / PULSE_MS;
+      if (k >= 1 || !n) { pulses.splice(i, 1); continue; }
+      ctx.strokeStyle = rgba('#f2c230', 0.8 * (1 - k));
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(n.sx, n.sy, 4 + 26 * ease(k), 0, 6.2832); ctx.stroke();
     }
     // Hub labels: the hub name and its count, just outside its band. A label
     // shows only while the pointer is on the hub or on one of its items; the
