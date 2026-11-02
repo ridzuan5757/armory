@@ -1,5 +1,6 @@
 export type Tab = 'skills' | 'jobs' | 'memory'
-export type SkillRow = { name: string; source: string; model: string; uses: number }
+// terms: three words about the command (its armory-terms line or its description).
+export type SkillRow = { name: string; source: string; model: string; uses: number; terms?: string[] }
 // session is the job's own session id; cwd its folder, ~ for home.
 export type JobRow = { id: string; name: string; state: string; detail: string; session: string; cwd: string }
 export type MemoryRow = { group: string; title: string; slug: string; out: number; in: number; links: string[]; size: number }
@@ -79,6 +80,8 @@ export type MachineRow = {
   // none), the hottest of all, and the hottest few sensors by name.
   temp?: { state: string; cpu: number; gpu: number; ssd: number; max: number; top: { name: string; c: number }[] }
 }
+export type CommandRow = { name: string; at: number }
+
 export type Snapshot = {
   skills: SkillRow[]
   jobs: JobRow[]
@@ -91,6 +94,9 @@ export type Snapshot = {
   plugins: PluginRow[]
   schedule: ScheduleRow
   machine: MachineRow
+  // The last slash commands of this session, oldest first: each one's name
+  // (no arguments) and time.
+  commands?: CommandRow[]
   loadedAt: number
   errors: string[]
 }

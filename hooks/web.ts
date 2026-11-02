@@ -20,6 +20,8 @@ import { ORBIT } from './themes/orbit'
 // the map, and a pinch (or + and -) zooms, as in a strategy game.
 // A theme can give FOCUS_CAM = false: then an event names itself in the
 // header but does not move or zoom the camera.
+// A theme can give FIXED_VIEW = true: then a drag, the wheel, a pinch and the
+// keys do not move or zoom the view; the pointer only shows details.
 // A map theme can give MAP_BUSY(): while it is true, the page draws at the
 // full frame rate, for a short animation that must move smoothly.
 export type Theme = { name: string; legend: string; script: string }
@@ -621,6 +623,8 @@ const SHARED_B = `
   const view = { yaw: 0.3, pitch: 0.2, vyaw: 0, vpitch: 0, zoom: 1, idle: 0, auto: 0, px: 0, py: 0, vpx: 0, vpy: 0 };
   const MAP = typeof MAP_VIEW === 'undefined' ? undefined : MAP_VIEW;
   const CAM_FOLLOWS = typeof FOCUS_CAM === 'undefined' || FOCUS_CAM;
+  const FIXED = typeof FIXED_VIEW !== 'undefined' && !!FIXED_VIEW;
+  if (FIXED) canvas.style.cursor = 'default';
   // A map starts with no recent input, so the first events move the camera.
   if (MAP) { view.yaw = 0; view.pitch = MAP.pitch; view.idle = -MAP_HOLD_MS; dprCap = 1.5; resize(); }
   const DIST = 1600, TOP = 56, BOTTOM = 44, SIDE = 24;
@@ -802,7 +806,7 @@ const SHARED_B = `
       return;
     }
     hover = pick(ev.clientX, ev.clientY);
-    canvas.style.cursor = hover ? 'grab' : 'move';
+    canvas.style.cursor = hover ? (FIXED ? 'pointer' : 'grab') : FIXED ? 'default' : 'move';
     if (!hover) { tip.style.display = 'none'; return; }
     tip.innerHTML = describe(hover);
     tip.style.display = 'block';
@@ -817,6 +821,7 @@ const SHARED_B = `
     tip.style.display = 'none';
     drag = NODE_DRAG ? pick(ev.clientX, ev.clientY) : undefined;
     if (drag) { canvas.style.cursor = 'grabbing'; return; }
+    if (FIXED) return;
     turn = { x: ev.clientX, y: ev.clientY };
     view.vyaw = view.vpitch = view.vpx = view.vpy = 0;
     if (MAP) canvas.style.cursor = 'grabbing';
@@ -824,7 +829,7 @@ const SHARED_B = `
   canvas.addEventListener('pointerup', () => {
     drag = undefined; turn = undefined;
     if (calm) view.vyaw = view.vpitch = 0;
-    canvas.style.cursor = hover ? 'grab' : MAP ? 'grab' : 'move';
+    canvas.style.cursor = FIXED ? (hover ? 'pointer' : 'default') : hover ? 'grab' : MAP ? 'grab' : 'move';
   });
   // Screen pixels per world unit at the middle of the view: what a drag or a
   // key moves by. A theme with its own projection gives MAP_SCALE.
@@ -845,7 +850,7 @@ const SHARED_B = `
     const room = b.wrap ? Math.max(ry, b.h / 2 / cp) : ry;
     view.py = Math.max(b.y - room, Math.min(b.y + room, cam.y + view.py + dy)) - cam.y;
   }
-  if (MAP) {
+  if (MAP && !FIXED) {
     // Arrow keys and WASD move the map by a fifth of the pane.
     const KEYS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], a: [-1, 0], d: [1, 0], w: [0, -1], s: [0, 1] };
     // + and - zoom around the middle of the pane, for a mouse with no pinch.
@@ -876,6 +881,7 @@ const SHARED_B = `
   }
   addEventListener('wheel', ev => {
     ev.preventDefault();
+    if (FIXED) return;
     touch();
     if (MAP && !ev.ctrlKey) {
       const f = pxPer();

@@ -4,14 +4,17 @@
 // further in. The whole circle turns slowly, so children stay with their
 // parents.
 import type { Theme } from '../web'
+import { COCKPIT_FONT_WOFF2 } from './cockpit-font'
 
 export const COCKPIT: Theme = {
   name: 'cockpit',
-  legend: 'drag to move · pinch or scroll to zoom · 0 for the whole view',
+  legend: 'hover a marker for details · a slash command starts Trans-Am',
   script: `
   const BUNDLE = false, NODE_DRAG = false, AUTO_TURN = false, MAP_VIEW = { pitch: 0 };
   // The view stays where the person put it: events do not move the camera.
   const FOCUS_CAM = false;
+  // The panel always shows the whole circle: no drag, zoom or pan.
+  const FIXED_VIEW = true;
 
   // The order of the sectors around the edge, from the top, clockwise.
   const ORDER = ['hub:files', 'hub:git', 'hub:mcp', 'hub:jobs', 'hub:schedule', 'hub:sessions', 'hub:usage', 'hub:machine', 'hub:plugins', 'hub:skills', 'hub:memory'];
@@ -80,6 +83,76 @@ export const COCKPIT: Theme = {
   // looks the same at any zoom: at 10 frames a second it moves about 0.3
   // pixel a frame, so the steps are hard to see. It stops while the pointer is on a node.
   const TURN_PX = 3;
+
+  // Trans-Am: when a slash command runs (any command, built in or not: the
+  // data names the last one of this session and its time), the panel goes
+  // into a Marut mode (the colors of Gundam Harute's Marut mode panel) for TA_MS: the cyan parts turn
+  // pink-red and a plum fill covers the circle, the circle and the outer rings
+  // turn three times faster, the markers leave pink-red afterimages, the command
+  // name shows in the center in heavy capitals with SYSTEM and three terms
+  // about the command under it, and the command's marker
+  // pulses. The mode eases in over TA_IN and out over TA_OUT.
+  // The Trans-Am lettering: "Cockpit Display", a wide, heavy subset of
+  // Orbitron that ships with the theme (see cockpit-font.ts). Until it loads,
+  // the text falls back to the system's heavy sans-serif.
+  const TA_FONT = '"Cockpit Display", ui-sans-serif, -apple-system, "Helvetica Neue", sans-serif';
+  try {
+    new FontFace('Cockpit Display', 'url(data:font/woff2;base64,${COCKPIT_FONT_WOFF2})', { weight: '900' })
+      .load().then(f => document.fonts.add(f)).catch(() => {});
+  } catch {}
+  // Three terms for each built-in command, which has no description file.
+  const BUILTIN_TERMS = {
+    'add-dir': ['FOLDER', 'ACCESS', 'WORKSPACE'], agents: ['SUBAGENT', 'ROSTER', 'CONFIG'],
+    clear: ['CONTEXT', 'RESET', 'HISTORY'], compact: ['CONTEXT', 'SUMMARY', 'TOKENS'],
+    config: ['SETTINGS', 'OPTIONS', 'PANEL'], context: ['TOKENS', 'WINDOW', 'USAGE'],
+    cost: ['TOKENS', 'SPEND', 'SESSION'], doctor: ['HEALTH', 'CHECK', 'INSTALL'],
+    export: ['TRANSCRIPT', 'SAVE', 'SHARE'], fast: ['SPEED', 'OUTPUT', 'MODE'],
+    help: ['GUIDE', 'COMMANDS', 'USAGE'], hooks: ['EVENTS', 'AUTOMATION', 'CONFIG'],
+    ide: ['EDITOR', 'LINK', 'INTEGRATION'], init: ['PROJECT', 'MEMORY', 'SETUP'],
+    login: ['ACCOUNT', 'AUTH', 'ACCESS'], logout: ['ACCOUNT', 'AUTH', 'EXIT'],
+    mcp: ['SERVERS', 'TOOLS', 'CONNECT'], memory: ['NOTES', 'CONTEXT', 'RECALL'],
+    model: ['ENGINE', 'SWITCH', 'TIER'], permissions: ['ACCESS', 'RULES', 'TOOLS'],
+    plugin: ['MODS', 'MARKETPLACE', 'INSTALL'], 'reload-plugins': ['MODS', 'HOOKS', 'RESTART'],
+    'reload-skills': ['SKILLS', 'INDEX', 'REFRESH'], resume: ['SESSION', 'HISTORY', 'RETURN'],
+    review: ['CODE', 'DIFF', 'FINDINGS'], rewind: ['CHECKPOINT', 'UNDO', 'HISTORY'],
+    status: ['ACCOUNT', 'MODEL', 'STATE'], statusline: ['FOOTER', 'DISPLAY', 'SETUP'],
+    theme: ['COLORS', 'STYLE', 'DISPLAY'], usage: ['LIMITS', 'QUOTA', 'PLAN'],
+  };
+  const TA_MS = 8000, TA_IN = 600, TA_OUT = 1500, TA_COLOR = '#e43565', CYAN = '#7fd8ff';
+  // The other colors of the Marut mode panel of Gundam Harute.
+  const TA_FILL = '#7a2f5f', TA_LIGHT = '#f3b8d7', TA_SHADOW = '#4a193b', TA_TERMS = '#d63a72';
+  let ta, lastCommandAt;
+  function taLevel(now) {
+    if (!ta) return 0;
+    const t = now - ta.start;
+    if (t >= TA_MS) { ta = undefined; return 0; }
+    return ease(Math.max(0, Math.min(1, t / TA_IN, (TA_MS - t) / TA_OUT)));
+  }
+  function mixHex(a, b, k) {
+    const p = parseInt(a.slice(1), 16), q = parseInt(b.slice(1), 16);
+    const ch = sh => Math.round(((p >> sh) & 255) + (((q >> sh) & 255) - ((p >> sh) & 255)) * k);
+    return '#' + ((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1);
+  }
+  // The engine passes each data update here, with the last commands of this
+  // session. Each new one, in order, starts the mode or restarts it: a ring
+  // spreads from the center and the name grows for a moment. The same
+  // command again during the mode counts up (x2, x3). The first update only
+  // sets the baseline, so old commands do not start the mode on a page load.
+  function onData(d) {
+    const list = (d.snapshot && d.snapshot.commands) || [];
+    const first = lastCommandAt === undefined;
+    for (const c of list) {
+      if (!first && c.at > lastCommandAt) {
+        const now = performance.now(), on = !!ta;
+        const count = on && ta.name === c.name ? ta.count + 1 : 1;
+        // A restart keeps the mode at full strength: no new fade in.
+        ta = { name: c.name, count, at: c.at, start: on ? now - TA_IN : now, pop: now };
+        if (nodes.has('skill:' + c.name)) pulses.push({ id: 'skill:' + c.name, born: now, color: TA_COLOR });
+      }
+      lastCommandAt = Math.max(lastCommandAt || 0, c.at);
+    }
+    if (first) lastCommandAt = lastCommandAt || 0;
+  }
   let spin = 0, lastSim = 0;
 
   // A hub sits just outside the edge, in the middle of its sector. All the
@@ -105,7 +178,7 @@ export const COCKPIT: Theme = {
     const now = performance.now();
     const dt = lastSim ? Math.min(0.5, (now - lastSim) / 1000) : 0;
     lastSim = now;
-    if (!calm && !hover) spin = (spin + dt * TURN_PX / (R * cam.s * view.zoom)) % 6.2832;
+    if (!calm && !hover) spin = (spin + dt * TURN_PX * (1 + 2 * taLevel(now)) / (R * cam.s * view.zoom)) % 6.2832;
     alpha *= 0.95;
     for (const n of nodes.values()) {
       const q = target(n);
@@ -115,7 +188,7 @@ export const COCKPIT: Theme = {
   }
 
   // The circle always turns, so the page never drops to 1 frame a second.
-  function MAP_AWAKE() { return !calm || links.size > 0; }
+  function MAP_AWAKE() { return !calm || links.size > 0 || !!ta; }
 
   function fitBounds() {
     const r = R * 1.35;
@@ -251,7 +324,7 @@ export const COCKPIT: Theme = {
   // A moving link asks for the full frame rate, so it grows smoothly.
   function MAP_BUSY() {
     for (const l of links.values()) if (l.moving) return true;
-    if (pulses.length) return true;
+    if (pulses.length || ta) return true;
     return false;
   }
   // The two dashed rings outside the bands turn on their own, in opposite
@@ -272,12 +345,54 @@ export const COCKPIT: Theme = {
     const C = (spot.x = 0, spot.y = 0, spot.z = 0, project(spot), spot);
     const cx = C.sx, cy = C.sy, Rp = R * C.sf;
     ctx.lineCap = 'butt';
+    // Trans-Am: the cyan parts turn pink-red, and a plum fill covers the circle.
+    const tk = taLevel(now), cyan = mixHex(CYAN, TA_COLOR, tk);
+    if (tk > 0) {
+      ctx.fillStyle = rgba(TA_FILL, 0.35 * tk);
+      ctx.beginPath(); ctx.arc(cx, cy, Rp * 1.02, 0, 6.2832); ctx.fill();
+      ctx.lineWidth = Math.max(4, Rp * 0.03);
+      ctx.strokeStyle = rgba(TA_COLOR, 0.22 * tk);
+      ctx.beginPath(); ctx.arc(cx, cy, Rp * 1.035, 0, 6.2832); ctx.stroke();
+      // A faint globe grid inside the circle, tilted about 20 degrees: four
+      // meridians whose widths change as the globe turns, and three
+      // latitude lines.
+      const turn = (now - ta.start) / 1000 * 0.5, tilt = -0.35;
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(TA_COLOR, 0.2 * tk);
+      for (let i = 0; i < 4; i++) {
+        const rx = Rp * 0.98 * Math.abs(Math.sin(turn + i * Math.PI / 4));
+        ctx.beginPath(); ctx.ellipse(cx, cy, Math.max(0.5, rx), Rp * 0.98, tilt, 0, 6.2832); ctx.stroke();
+      }
+      for (const lat of [-0.5, 0, 0.5]) {
+        const w = Rp * 0.98 * Math.cos(Math.asin(lat)), y = Rp * 0.98 * lat;
+        ctx.beginPath();
+        ctx.ellipse(cx - Math.sin(tilt) * y, cy + Math.cos(tilt) * y, w, w * 0.16, tilt, 0, 6.2832);
+        ctx.stroke();
+      }
+      // Two thick bracket arcs on opposite sides, just outside the bands,
+      // each in three parts with small notches between them. They turn
+      // slowly while the mode lasts.
+      const br = Rp * 1.15, bw = Math.max(5, Rp * 0.045), base = -2.35 + (now - ta.start) / 1000 * 0.12;
+      ctx.lineWidth = bw;
+      ctx.strokeStyle = rgba(TA_LIGHT, 0.6 * tk);
+      for (const side of [0, Math.PI]) {
+        for (const [a0, a1] of [[0, 0.55], [0.6, 0.95], [1.0, 1.25]]) {
+          ctx.beginPath(); ctx.arc(cx, cy, br, base + side + a0, base + side + a1); ctx.stroke();
+        }
+      }
+      // A thin inner line along each bracket.
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(TA_LIGHT, 0.5 * tk);
+      for (const side of [0, Math.PI]) {
+        ctx.beginPath(); ctx.arc(cx, cy, br - bw * 0.9, base + side - 0.05, base + side + 1.3); ctx.stroke();
+      }
+    }
     // The inner levels: one faint dashed ring each, in one color.
     let deepest = 1;
     for (const sg of segments) deepest = Math.max(deepest, sg.depth);
     ctx.lineWidth = 1;
     ctx.setLineDash([2, 5]);
-    ctx.strokeStyle = rgba('#7fd8ff', 0.1);
+    ctx.strokeStyle = rgba(cyan, 0.1);
     for (let d = 2; d <= Math.min(deepest, 7); d++) {
       ctx.beginPath(); ctx.arc(cx, cy, Rp * RING(d), 0, 6.2832); ctx.stroke();
     }
@@ -285,7 +400,7 @@ export const COCKPIT: Theme = {
     // Ticks inside the edge: 180 of them, longer at each 5th and each 15th.
     // They turn with the circle.
     ctx.lineWidth = 1;
-    ctx.strokeStyle = rgba('#7fd8ff', 0.22);
+    ctx.strokeStyle = rgba(cyan, 0.22);
     ctx.beginPath();
     for (let i = 0; i < 180; i++) {
       const a = spin + i * 6.2832 / 180, long = i % 15 === 0 ? 0.04 : i % 5 === 0 ? 0.022 : 0.012;
@@ -294,10 +409,10 @@ export const COCKPIT: Theme = {
     }
     ctx.stroke();
     // Outer rings: dashes with one gap in each six.
-    ctx.strokeStyle = rgba('#7fd8ff', 0.18);
+    ctx.strokeStyle = rgba(cyan, 0.18);
     for (const ring of rings) {
       const rr = Rp * ring.r;
-      if (!calm) ring.a = (ring.a + dt * ring.px / rr) % 6.2832;
+      if (!calm) ring.a = (ring.a + dt * ring.px * (1 + 2 * tk) / rr) % 6.2832;
       ctx.lineWidth = ring.width;
       for (let i = 0; i < ring.n; i++) {
         if (i % 6 === 5) continue;
@@ -394,6 +509,16 @@ export const COCKPIT: Theme = {
       const g = ease(grown(n.born, now, 500)) * (n.dying ? 1 - grown(n.dying, now, 600) : 1);
       if (g <= 0) continue;
       const r = Math.max(1.5, Math.min(4, n.r * 0.55)) * n.sf * g;
+      // Trans-Am afterimages: pink-red copies just behind the marker, along the
+      // turn of the circle.
+      if (tk > 0.05 && !calm) {
+        const dx = n.sx - cx, dy = n.sy - cy;
+        for (let i = 1; i <= 3; i++) {
+          const a = -0.018 * i * tk, ca = Math.cos(a), sa = Math.sin(a);
+          ctx.fillStyle = rgba(TA_COLOR, 0.28 * tk * (1 - i / 4));
+          ctx.fillRect(cx + dx * ca - dy * sa - r, cy + dx * sa + dy * ca - r, 2 * r, 2 * r);
+        }
+      }
       ctx.fillStyle = rgba(n.color, n.dim ? 0.45 : 0.9);
       ctx.beginPath();
       // An item with children is a diamond; a leaf is a square.
@@ -407,9 +532,50 @@ export const COCKPIT: Theme = {
     for (let i = pulses.length - 1; i >= 0; i--) {
       const pl = pulses[i], n = nodes.get(pl.id), k = (now - pl.born) / PULSE_MS;
       if (k >= 1 || !n) { pulses.splice(i, 1); continue; }
-      ctx.strokeStyle = rgba('#f2c230', 0.8 * (1 - k));
+      ctx.strokeStyle = rgba(pl.color || '#f2c230', 0.8 * (1 - k));
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(n.sx, n.sy, 4 + 26 * ease(k), 0, 6.2832); ctx.stroke();
+    }
+    // Trans-Am: the command name in heavy capitals in the center, with a
+    // dark plum shadow offset behind it, and two small lines under it, as on
+    // the Trans-Am screen of the game.
+    if (tk > 0) {
+      const size = Math.max(16, Math.min(64, Rp * 0.17)), off = Math.max(2, size * 0.07);
+      // A (re)start: the name grows by a quarter and settles in 0.4 s, and a
+      // ring spreads from the center over 0.7 s.
+      const since = now - ta.pop, grow = 1 + 0.25 * (1 - ease(Math.min(1, since / 400)));
+      const name = ta.name.toUpperCase() + (ta.count > 1 ? ' \u00d7' + ta.count : '');
+      if (since < 700) {
+        const k = ease(since / 700);
+        ctx.strokeStyle = rgba(TA_COLOR, 0.8 * (1 - k) * tk);
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(cx, cy, Rp * k, 0, 6.2832); ctx.stroke();
+      }
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      // A long name shrinks so that it stays inside 85 % of the circle.
+      ctx.font = '900 ' + Math.round(size) + 'px ' + TA_FONT;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(size * 0.04) + 'px';
+      const fit = Math.min(1, Rp * 1.7 / Math.max(1, ctx.measureText(name).width));
+      ctx.font = '900 ' + Math.round(size * fit * grow) + 'px ' + TA_FONT;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(size * fit * grow * 0.04) + 'px';
+      ctx.fillStyle = rgba(TA_SHADOW, 0.9 * tk);
+      ctx.fillText(name, cx + off, cy - size * 0.25 + off);
+      ctx.fillStyle = rgba(TA_COLOR, 0.95 * tk);
+      ctx.fillText(name, cx, cy - size * 0.25);
+      const small = Math.max(9, size * 0.3);
+      ctx.font = '900 ' + small + 'px ' + TA_FONT;
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(small * 0.15) + 'px';
+      // SYSTEM, then three terms about the command: from the data for a
+      // skill or plugin command, from BUILTIN_TERMS for a built-in one.
+      const sk = nodes.get('skill:' + ta.name), data = sk && sk.data;
+      const terms = (data && data.terms) || BUILTIN_TERMS[ta.name] || ['CLAUDE', 'CODE', 'COMMAND'];
+      ctx.fillStyle = rgba('#ffffff', 0.92 * tk);
+      ctx.fillText('SYSTEM', cx, cy + size * 0.5);
+      ctx.fillStyle = rgba(TA_TERMS, 0.95 * tk);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = Math.round(small * 0.4) + 'px';
+      ctx.fillText(terms.join('  '), cx, cy + size * 0.5 + small * 1.25);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
     }
     // Hub labels: the hub name and its count, just outside its band. A label
     // shows only while the pointer is on the hub or on one of its items; the

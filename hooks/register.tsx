@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { FileOp, FileRow, GitRepo, JobRow, MachineRow, McpRow, MemoryRow, PluginRow, ScheduleRow, SessionRow, SkillRow, Snapshot, Tab, Touch, UsageRow } from '../types'
+import type { CommandRow, FileOp, FileRow, GitRepo, JobRow, MachineRow, McpRow, MemoryRow, PluginRow, ScheduleRow, SessionRow, SkillRow, Snapshot, Tab, Touch, UsageRow } from '../types'
 
 import { parsePlan, runStress, summary } from './stress'
 import type { Sink } from './stress'
@@ -39,6 +39,57 @@ const groupOf = (file: string) => {
 // fallback where those tools fail.
 const COUNT = `grep -oE '"display":"/[^[:space:]"]+' "$1" | sort | uniq -c`
 
+// The last slash commands of this session, built in or not, each run with
+// its own time. The session transcript has one user line per run, with a
+// <command-name> tag; history.jsonl drops a run that repeats the one before
+// it, so it serves only as the fallback. Only each command's name and time
+// leave here, never other text of the transcript or the arguments.
+const COMMANDS = 10
+const TRANSCRIPT_COMMANDS = `f=$(ls "$1"/.claude/projects/*/"$2".jsonl 2>/dev/null | head -n 1); [ -n "$f" ] || exit 3; tail -n 400 "$f" | grep '"type":"user"' | grep '<command-name>/'`
+const HISTORY_COMMANDS = `tail -n 200 "$1/.claude/history.jsonl" | grep -F "\\"sessionId\\":\\"$2\\"" | grep '"display":"/' | tail -n ${COMMANDS}`
+
+async function loadCommands($: EngineInterface, home: string): Promise<CommandRow[]> {
+  const id = await $.session.id()
+  const rows: CommandRow[] = []
+  const fromTranscript = await $.process.run(['sh', '-c', TRANSCRIPT_COMMANDS, 'commands', home, id], { timeoutMs: 3000 }).catch(() => undefined)
+  if (fromTranscript && fromTranscript.exitCode !== 3) {
+    for (const line of fromTranscript.stdout.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const row = JSON.parse(line) as { timestamp?: unknown; message?: { content?: unknown } }
+        const c = row.message?.content
+        const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => (x && typeof x.text === 'string' ? x.text : '')).join(' ') : ''
+        const name = /<command-name>\/([^<\s]+)<\/command-name>/.exec(text)?.[1]
+        const at = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
+        if (name && Number.isFinite(at)) rows.push({ name, at })
+      } catch {}
+    }
+    return rows.slice(-COMMANDS)
+  }
+  const out = await $.process.run(['sh', '-c', HISTORY_COMMANDS, 'commands', home, id], { timeoutMs: 3000 }).catch(() => undefined)
+  for (const line of (out?.stdout ?? '').split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const row = JSON.parse(line) as { display?: unknown; timestamp?: unknown }
+      const name = typeof row.display === 'string' ? /^\/([^\s]+)/.exec(row.display)?.[1] : undefined
+      if (name && typeof row.timestamp === 'number') rows.push({ name, at: row.timestamp })
+    } catch {}
+  }
+  return rows
+}
+
+// A slash command that runs no turn (a built-in one) shows only through this
+// check, once a second: it writes the page data when the list changed.
+let commandTimer: { cancel: () => void } | undefined
+async function checkCommands($: EngineInterface) {
+  const home = (await $.env.get('HOME')) ?? ''
+  const commands = await loadCommands($, home)
+  const before = await read($, snapshot)
+  if (JSON.stringify(before.commands ?? []) === JSON.stringify(commands)) return
+  const next = await update($, snapshot, s => ({ ...s, commands }))
+  if (web.isOn) await writeData($, next, 1000)
+}
+
 async function countUses($: EngineInterface, file: string, errors: string[]) {
   const uses = new Map<string, number>()
   const counted = await $.process.run(['sh', '-c', COUNT, 'count', file], { timeoutMs: 10000 }).catch(() => undefined)
@@ -63,8 +114,36 @@ async function countUses($: EngineInterface, file: string, errors: string[]) {
   return uses
 }
 
+// Three terms for a command, for the cockpit theme's Trans-Am text: the
+// skill's own "armory-terms" line if it has one, else the first three words
+// of its description that are not common words and not part of its name.
+const TERM_STOP = new Set(('a an and any are as at be been being but by can could do does doing done each else for from '
+  + 'had has have here how if in into is it its like may more most must need needs no not of on once only or other '
+  + 'over own same should so some such than that the their them then there these they this those to under until up '
+  + 'use used uses using very via was we were what when where whenever which while who why will with within without '
+  + 'would you your user users asks ask asked wants want also about after before every always never instead '
+  + 'explicitly something anything specific given give gives make makes made help helps run runs apply applies '
+  + 'trigger triggers triggered includes include including mention mentions skill skills command commands claude '
+  + 'code request requests task tasks ensure based just even still well one two three new get set see '
+  + 'real running inside outside input show shows lets allows automatically').split(' '))
+
+function pickTerms(name: string, text: string | undefined): string[] | undefined {
+  if (!text) return undefined
+  const own = new Set(name.toLowerCase().split(/[^a-z0-9]+/))
+  const seen = new Set<string>()
+  const terms: string[] = []
+  for (const w of text.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []) {
+    const word = w.replace(/-+$/, '')
+    if (TERM_STOP.has(word) || own.has(word) || seen.has(word)) continue
+    seen.add(word)
+    terms.push(word.slice(0, 14).toUpperCase())
+    if (terms.length === 3) break
+  }
+  return terms.length ? terms : undefined
+}
+
 async function loadSkills($: EngineInterface, home: string, errors: string[]): Promise<SkillRow[]> {
-  const commands = (await $.command.list()) as { name: string; source: string }[]
+  const commands = (await $.command.list()) as { name: string; source: string; description?: unknown }[]
   const own = commands.filter(c => c.source === 'user' || c.source === 'plugin')
 
   const uses = await countUses($, `${home}/.claude/history.jsonl`, errors)
@@ -74,8 +153,11 @@ async function loadSkills($: EngineInterface, home: string, errors: string[]): P
       const skillFile = `${home}/.claude/skills/${c.name}/SKILL.md`
       const text: string | undefined = await $.fs.read(skillFile).catch(() => undefined)
       const model = (text && frontmatter(text, 'model')) || '-'
+      const own = text && frontmatter(text, 'armory-terms')
+      const described = typeof c.description === 'string' && c.description ? c.description : text && frontmatter(text, 'description')
+      const terms = own ? own.split(/\s+/).slice(0, 3).map(t => t.toUpperCase()) : pickTerms(c.name, described)
 
-      return { name: c.name, source: c.source, model, uses: uses.get(c.name) ?? 0 }
+      return { name: c.name, source: c.source, model, uses: uses.get(c.name) ?? 0, ...(terms ? { terms } : {}) }
     }),
   ).then(rows => rows.sort((a, b) => b.uses - a.uses || a.name.localeCompare(b.name)))
 }
@@ -687,7 +769,8 @@ async function refresh($: EngineInterface) {
   const plugins = await loadPlugins($, home).catch(err => (errors.push(`plugins: ${String(err)}`), []))
   const schedule = (await read($, snapshot)).schedule ?? EMPTY.schedule
   const machine = await loadMachine($).catch(err => (errors.push(`machine: ${String(err)}`), EMPTY.machine))
-  const next = { skills, jobs, memory, files, sessions, git, mcp, usage, plugins, schedule, machine, loadedAt: Date.now(), errors }
+  const commands = await loadCommands($, home).catch(() => [])
+  const next = { skills, jobs, memory, files, sessions, git, mcp, usage, plugins, schedule, machine, commands, loadedAt: Date.now(), errors }
   await update($, snapshot, () => next)
   if (web.isOn) await writeData($, next, 1000)
 }
@@ -989,6 +1072,8 @@ export const register: Register = on => {
     // Background and headless sessions open nothing.
     sessionTimer?.cancel()
     sessionTimer = $.clock.every(5000, () => void checkSessions($).catch(() => undefined))
+    commandTimer?.cancel()
+    commandTimer = $.clock.every(1000, () => void checkCommands($).catch(() => undefined))
     if (e.isInteractive && e.surface === 'terminal') {
       void (async () => {
         await refresh($)
