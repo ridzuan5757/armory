@@ -162,7 +162,7 @@ export const COCKPIT: Theme = {
     }
     if (first) lastCommandAt = lastCommandAt || 0;
   }
-  let spin = 0, lastSim = 0;
+  let spin = 0, lastSim = 0, placed = false;
 
   // A hub sits just outside the edge, in the middle of its sector. All the
   // rings and the hubs turn by spin.
@@ -189,11 +189,15 @@ export const COCKPIT: Theme = {
     lastSim = now;
     if (!calm && !hover) spin = (spin + dt * TURN_PX * (1 + 2 * taLevel(now)) / (R * cam.s * view.zoom)) % 6.2832;
     alpha *= 0.95;
+    // On the first layout the markers go to their places at once, so the
+    // circle fades in already in place; later markers move there.
+    const k = placed ? 0.18 : 1;
     for (const n of nodes.values()) {
       const q = target(n);
       if (!q) continue;
-      n.x += (q.x - n.x) * 0.18; n.y += (q.y - n.y) * 0.18; n.z = 0;
+      n.x += (q.x - n.x) * k; n.y += (q.y - n.y) * k; n.z = 0;
     }
+    if (nodes.size) placed = true;
   }
 
   // The circle always turns, so the page never drops to 1 frame a second.
