@@ -42,10 +42,13 @@ const COUNT = `grep -oE '"display":"/[^[:space:]"]+' "$1" | sort | uniq -c`
 // The last slash commands of this session, built in or not, each run with
 // its own time. The session transcript has one user line per run, with a
 // <command-name> tag; history.jsonl drops a run that repeats the one before
-// it, so it serves only as the fallback. Only each command's name and time
-// leave here, never other text of the transcript or the arguments.
+// it, so it serves only as the fallback. A skill that Claude runs with the
+// Skill tool (for example a speckit stage) has no <command-name> tag: it
+// shows as a Skill tool call in an assistant line, so these lines count too.
+// Only each command's name and time leave here, never other text of the
+// transcript or the arguments.
 const COMMANDS = 10
-const TRANSCRIPT_COMMANDS = `f=$(ls "$1"/.claude/projects/*/"$2".jsonl 2>/dev/null | head -n 1); [ -n "$f" ] || exit 3; tail -n 400 "$f" | grep '"type":"user"' | grep '<command-name>/'`
+const TRANSCRIPT_COMMANDS = `f=$(ls "$1"/.claude/projects/*/"$2".jsonl 2>/dev/null | head -n 1); [ -n "$f" ] || exit 3; tail -n 400 "$f" | grep -e '"type":"user"' -e '"type":"assistant"' | grep -e '<command-name>/' -e '"name":"Skill"'`
 const HISTORY_COMMANDS = `tail -n 200 "$1/.claude/history.jsonl" | grep -F "\\"sessionId\\":\\"$2\\"" | grep '"display":"/' | tail -n ${COMMANDS}`
 
 async function loadCommands($: EngineInterface, home: string): Promise<CommandRow[]> {
@@ -58,10 +61,17 @@ async function loadCommands($: EngineInterface, home: string): Promise<CommandRo
       try {
         const row = JSON.parse(line) as { timestamp?: unknown; message?: { content?: unknown } }
         const c = row.message?.content
+        const at = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
+        if (!Number.isFinite(at)) continue
+        if (Array.isArray(c)) {
+          for (const x of c) {
+            const skill = x && x.type === 'tool_use' && x.name === 'Skill' && x.input && typeof x.input.skill === 'string' ? x.input.skill : undefined
+            if (skill && /^[^\s<]+$/.test(skill)) rows.push({ name: skill, at })
+          }
+        }
         const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => (x && typeof x.text === 'string' ? x.text : '')).join(' ') : ''
         const name = /<command-name>\/([^<\s]+)<\/command-name>/.exec(text)?.[1]
-        const at = typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN
-        if (name && Number.isFinite(at)) rows.push({ name, at })
+        if (name) rows.push({ name, at })
       } catch {}
     }
     return rows.slice(-COMMANDS)
