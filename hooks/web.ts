@@ -108,17 +108,17 @@ const HEAD = `<!doctype html>
 </header>
 <div id="tip"></div>
 <footer>
-  <span><i style="background:#d8e85a"></i>skills</span>
-  <span><i style="background:#f5b94a"></i>jobs</span>
-  <span><i style="background:#7aa2ff"></i>memory</span>
-  <span><i style="background:#e8ecd8"></i>files</span>
-  <span><i style="background:#e0a3ff"></i>sessions</span>
+  <span><i style="background:#c8e85a"></i>skills</span>
+  <span><i style="background:#f5a03c"></i>jobs</span>
+  <span><i style="background:#e07aff"></i>memory</span>
+  <span><i style="background:#5cc8e8"></i>files</span>
+  <span><i style="background:#ffd84a"></i>sessions</span>
   <span><i style="background:#f0643c"></i>git</span>
   <span><i style="background:#3fd0b0"></i>mcp</span>
-  <span><i style="background:#9ad86a"></i>usage</span>
-  <span><i style="background:#ff8fa3"></i>plugins</span>
-  <span><i style="background:#ffd27a"></i>schedule</span>
-  <span><i style="background:#7fb2ff"></i>machine</span>
+  <span><i style="background:#6ad87a"></i>usage</span>
+  <span><i style="background:#ff7aa8"></i>plugins</span>
+  <span><i style="background:#9a7aff"></i>schedule</span>
+  <span><i style="background:#6a8cff"></i>machine</span>
   <span><i style="background:#7fd8ff"></i>read</span>
   <span><i style="background:#ff9a4d"></i>write</span>
   <span><i style="background:#5fd38d"></i>new</span>`
@@ -127,7 +127,10 @@ const SHARED_A = `
   const MODEL = { opus: '#b48cff', sonnet: '#5ab0ff', haiku: '#5fd38d', fable: '#ff9a4d' };
   const STATE = { running: '#f5b94a', working: '#f5b94a', blocked: '#ff6b6b', done: '#5fd38d', failed: '#ff6b6b' };
   const GROUP = { project: '#7aa2ff', feedback: '#f08bb4', user: '#5fd38d', reference: '#4fd6c8' };
-  const HUB = { skills: '#d8e85a', jobs: '#f5b94a', memory: '#7aa2ff', files: '#e8ecd8', sessions: '#e0a3ff', git: '#f0643c', mcp: '#3fd0b0', usage: '#9ad86a', plugins: '#ff8fa3', schedule: '#ffd27a', machine: '#7fb2ff' };
+  // One hue for each hub, at least about 15 degrees apart, and far apart for
+  // neighbor bands in the cockpit order. No hub is white or grey, so a theme
+  // can use a neutral grey for its own marks.
+  const HUB = { skills: '#c8e85a', jobs: '#f5a03c', memory: '#e07aff', files: '#5cc8e8', sessions: '#ffd84a', git: '#f0643c', mcp: '#3fd0b0', usage: '#6ad87a', plugins: '#ff7aa8', schedule: '#9a7aff', machine: '#6a8cff' };
   // A fill from 0 to 100 %: green, then amber from 50, red from 80.
   const fillColor = p => p >= 80 ? '#ff6b6b' : p >= 50 ? '#f5b94a' : '#7fd8a6';
   const MCP_STATUS = { connected: '#3fd0b0', auth: '#f5b94a', off: '#ff6b6b' };
